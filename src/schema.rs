@@ -1,0 +1,58 @@
+use cedar_policy_core::ast::{InternalName, Unknown};
+use cedar_policy_core::ast::{Name, UnreservedId};
+use cedar_policy_core::entities::AttributeType;
+use cedar_policy_core::parser::Loc;
+use cedar_policy_core::validator::json_schema::Fragment;
+use cedar_policy_core::validator::RawName;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
+use k8s_openapi::group;
+use kube::core::GroupVersion;
+use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::ops::Deref;
+use std::str::FromStr;
+
+use err::Result;
+
+mod connect;
+mod core;
+mod customverbs;
+mod discovery;
+mod err;
+pub mod fork;
+mod impersonate;
+mod openapi;
+mod types;
+mod util; // TODO: Remove this once we use the native kube discovery client
+
+pub use discovery::CedarGroupVersion;
+
+// Pipeline:
+// 1. Collect all info about the group, its versions, schemas, and discovery data
+// 2. Create a Cedar namespace per group, with given common fields
+//   a) Loop APIResourceList, and find from there the gvks to link to. Status gets its own Cedar type, with only status fields filled in?
+// 3. Add common types/actions used by all
+
+pub fn build_base_schema(rbac_verbs: Vec<String>) -> Result<Fragment<RawName>> {
+    let mut fragment = core::build_base()?;
+    impersonate::with_impersonation(&mut fragment)?;
+    customverbs::with_custom_verbs(&mut fragment, rbac_verbs)?;
+    Ok(fragment)
+}
+
+pub fn build_schema_for_gv(
+    mut fragment: &mut Fragment<RawName>,
+    gv: &CedarGroupVersion,
+    apiresourcelist: &APIResourceList,
+    openapi_spec: &Value,
+) -> Result<()> {
+    discovery::with_kubernetes_groupversion(&mut fragment, gv, apiresourcelist)?;
+    connect::with_connect_rewrites(&mut fragment, gv, openapi_spec)?;
+    openapi::with_openapi_schemas(&mut fragment, openapi_spec)?;
+
+    // TODO: With status rewrite of CRDs
+    Ok(())
+}

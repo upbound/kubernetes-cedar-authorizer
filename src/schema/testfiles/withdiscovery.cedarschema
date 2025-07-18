@@ -1,0 +1,839 @@
+namespace io::k8s::authentication {
+  type VersionedTokenRequest = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": io::k8s::authentication::V1TokenRequest
+  };
+
+  entity groups;
+
+  entity serviceaccounts = {
+    "name": __cedar::String,
+    "namespace": __cedar::String
+  };
+
+  entity uids;
+
+  entity userextras = {
+    "key": __cedar::String,
+    "value": __cedar::String
+  };
+
+  entity users;
+}
+
+namespace autoscaling {
+  type VersionedScale = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": autoscaling::V1Scale
+  };
+}
+
+namespace core {
+  type VersionedBinding = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Binding
+  };
+
+  type VersionedComponentStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ComponentStatus
+  };
+
+  type VersionedConfigMap = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ConfigMap
+  };
+
+  type VersionedEndpoints = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Endpoints
+  };
+
+  type VersionedEvent = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Event
+  };
+
+  type VersionedLimitRange = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1LimitRange
+  };
+
+  type VersionedNamespace = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Namespace
+  };
+
+  type VersionedNamespaceStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1NamespaceStatus
+  };
+
+  type VersionedNode = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Node
+  };
+
+  type VersionedNodeProxyOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1NodeProxyOptions
+  };
+
+  type VersionedNodeStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1NodeStatus
+  };
+
+  type VersionedPersistentVolume = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PersistentVolume
+  };
+
+  type VersionedPersistentVolumeClaim = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PersistentVolumeClaim
+  };
+
+  type VersionedPersistentVolumeClaimStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PersistentVolumeClaimStatus
+  };
+
+  type VersionedPersistentVolumeStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PersistentVolumeStatus
+  };
+
+  type VersionedPod = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Pod
+  };
+
+  type VersionedPodAttachOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodAttachOptions
+  };
+
+  type VersionedPodExecOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodExecOptions
+  };
+
+  type VersionedPodLogOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodLogOptions
+  };
+
+  type VersionedPodPortForwardOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodPortForwardOptions
+  };
+
+  type VersionedPodProxyOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodProxyOptions
+  };
+
+  type VersionedPodStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodStatus
+  };
+
+  type VersionedPodTemplate = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1PodTemplate
+  };
+
+  type VersionedReplicationController = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ReplicationController
+  };
+
+  type VersionedReplicationControllerStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ReplicationControllerStatus
+  };
+
+  type VersionedResourceQuota = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ResourceQuota
+  };
+
+  type VersionedResourceQuotaStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ResourceQuotaStatus
+  };
+
+  type VersionedSecret = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Secret
+  };
+
+  type VersionedService = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1Service
+  };
+
+  type VersionedServiceAccount = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ServiceAccount
+  };
+
+  type VersionedServiceProxyOptions = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ServiceProxyOptions
+  };
+
+  type VersionedServiceStatus = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": core::V1ServiceStatus
+  };
+
+  entity bindings in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedBinding,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedBinding
+  };
+
+  entity componentstatuses = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedComponentStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedComponentStatus
+  };
+
+  entity configmaps in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedConfigMap,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedConfigMap
+  };
+
+  entity endpoints in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedEndpoints,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedEndpoints
+  };
+
+  entity events in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedEvent,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedEvent
+  };
+
+  entity limitranges in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedLimitRange,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedLimitRange
+  };
+
+  entity namespaces = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNamespace,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNamespace
+  };
+
+  entity namespaces_finalize = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNamespace,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNamespace
+  };
+
+  entity namespaces_status = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNamespaceStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNamespaceStatus
+  };
+
+  entity nodes = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNode,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNode
+  };
+
+  entity nodes_proxy = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNodeProxyOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNodeProxyOptions
+  };
+
+  entity nodes_status = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedNodeStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedNodeStatus
+  };
+
+  entity persistentvolumeclaims in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPersistentVolumeClaim,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPersistentVolumeClaim
+  };
+
+  entity persistentvolumeclaims_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPersistentVolumeClaimStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPersistentVolumeClaimStatus
+  };
+
+  entity persistentvolumes = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedPersistentVolume,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPersistentVolume
+  };
+
+  entity persistentvolumes_status = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "request"?: core::VersionedPersistentVolumeStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPersistentVolumeStatus
+  };
+
+  entity pods in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPod,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPod
+  };
+
+  entity pods_attach in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodAttachOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodAttachOptions
+  };
+
+  entity pods_binding in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedBinding,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedBinding
+  };
+
+  entity pods_ephemeralcontainers in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPod,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPod
+  };
+
+  entity pods_eviction in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: policy::VersionedEviction,
+    "resourceCombined": __cedar::String,
+    "stored"?: policy::VersionedEviction
+  };
+
+  entity pods_exec in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodExecOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodExecOptions
+  };
+
+  entity pods_log in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodLogOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodLogOptions
+  };
+
+  entity pods_portforward in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodPortForwardOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodPortForwardOptions
+  };
+
+  entity pods_proxy in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodProxyOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodProxyOptions
+  };
+
+  entity pods_resize in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPod,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPod
+  };
+
+  entity pods_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodStatus
+  };
+
+  entity podtemplates in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodTemplate,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedPodTemplate
+  };
+
+  entity replicationcontrollers in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedReplicationController,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedReplicationController
+  };
+
+  entity replicationcontrollers_scale in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: autoscaling::VersionedScale,
+    "resourceCombined": __cedar::String,
+    "stored"?: autoscaling::VersionedScale
+  };
+
+  entity replicationcontrollers_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedReplicationControllerStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedReplicationControllerStatus
+  };
+
+  entity resourcequotas in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedResourceQuota,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedResourceQuota
+  };
+
+  entity resourcequotas_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedResourceQuotaStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedResourceQuotaStatus
+  };
+
+  entity secrets in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedSecret,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedSecret
+  };
+
+  entity serviceaccounts in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedServiceAccount,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedServiceAccount
+  };
+
+  entity serviceaccounts_token in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: io::k8s::authentication::VersionedTokenRequest,
+    "resourceCombined": __cedar::String,
+    "stored"?: io::k8s::authentication::VersionedTokenRequest
+  };
+
+  entity services in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedService,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedService
+  };
+
+  entity services_proxy in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedServiceProxyOptions,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedServiceProxyOptions
+  };
+
+  entity services_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedServiceStatus,
+    "resourceCombined": __cedar::String,
+    "stored"?: core::VersionedServiceStatus
+  };
+}
+
+namespace k8s {
+  entity Namespace = {
+    "metadata": meta::V1ObjectMeta,
+    "name": __cedar::String
+  };
+
+  entity Node = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "name": __cedar::String,
+    "uid": __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  entity Resource in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    "apiVersion": __cedar::String,
+    "name": __cedar::String,
+    "namespace"?: k8s::Namespace,
+    "resourceCombined": __cedar::String
+  };
+
+  entity ServiceAccount in [k8s::Namespace] = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "uid": __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity User = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "uid": __cedar::String,
+    "username": __cedar::String
+  };
+
+  action "any" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "approve" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "attest" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "bind" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "connect" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "create" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::bindings, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::nodes_proxy, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::pods_attach, core::pods_binding, core::pods_eviction, core::pods_exec, core::pods_portforward, core::pods_proxy, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::serviceaccounts_token, core::services, core::services_proxy],
+    context: {}
+  };
+
+  action "delete" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, k8s::NonResourceURL, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::nodes_proxy, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::pods_proxy, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services, core::services_proxy],
+    context: {}
+  };
+
+  action "deletecollection" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::configmaps, core::endpoints, core::events, core::limitranges, core::nodes, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services],
+    context: {}
+  };
+
+  action "escalate" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "get" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, k8s::NonResourceURL, core::componentstatuses, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_attach, core::pods_ephemeralcontainers, core::pods_exec, core::pods_log, core::pods_portforward, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
+    context: {}
+  };
+
+  action "head" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "impersonate" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [io::k8s::authentication::users, io::k8s::authentication::serviceaccounts, io::k8s::authentication::groups, io::k8s::authentication::uids, io::k8s::authentication::userextras],
+    context: {}
+  };
+
+  action "list" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::componentstatuses, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services],
+    context: {}
+  };
+
+  action "options" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "patch" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, k8s::NonResourceURL, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_ephemeralcontainers, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
+    context: {}
+  };
+
+  action "post" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "put" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "sign" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "update" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_finalize, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_ephemeralcontainers, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
+    context: {}
+  };
+
+  action "use" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource],
+    context: {}
+  };
+
+  action "watch" in [k8s::Action::"any"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services],
+    context: {}
+  };
+}
+
+namespace meta {
+  type V1ObjectMeta = {
+    "annotations": meta::StringToStringMap,
+    "creationTimestamp": __cedar::String,
+    "deletionTimestamp"?: __cedar::String,
+    "finalizers": Set<__cedar::String>,
+    "generateName"?: __cedar::String,
+    "labels": meta::StringToStringMap,
+    "resourceVersion": __cedar::String,
+    "uid": __cedar::String
+  };
+
+  entity StringToStringMap = {
+    "keys": Set<__cedar::String>
+  } tags __cedar::String;
+
+  entity StringToStringSetMap = {
+    "keys": Set<__cedar::String>
+  } tags Set<__cedar::String>;
+}
+
+namespace policy {
+  type VersionedEviction = {
+    "apiVersion": __cedar::String,
+    "kind": __cedar::String,
+    "metadata": meta::V1ObjectMeta,
+    "v1": policy::V1Eviction
+  };
+}
