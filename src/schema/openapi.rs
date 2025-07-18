@@ -1,22 +1,17 @@
-use cedar_policy_core::ast::Name;
 use cedar_policy_core::validator::json_schema::*;
 use cedar_policy_core::validator::RawName;
 
 use super::discovery::CedarGroupVersion;
 use super::types::CedarTypeName;
 
-use k8s_openapi::apimachinery::pkg::apis::meta;
 use serde_json::Value;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Deref;
-use std::str::FromStr;
 use std::sync::LazyLock;
 
 use super::err::{Result, SchemaProcessingError};
 use super::util::{make_stringmap_type, namespace_of_fragment};
-
-use super::core::META_NS;
 
 pub(crate) struct GroupVersionedOpenAPIType {
     pub(crate) gv: CedarGroupVersion,
@@ -179,7 +174,7 @@ fn title_case(name: &str) -> String {
 }
 
 pub(super) fn with_openapi_schemas(
-    mut fragment: &mut Fragment<RawName>,
+    fragment: &mut Fragment<RawName>,
     openapi_spec: &Value,
 ) -> Result<()> {
     // TODO: Move this top-level into the binary?
@@ -188,15 +183,14 @@ pub(super) fn with_openapi_schemas(
         .and_then(|v| v.get("schemas"))
         .and_then(|v| v.as_object())
         .ok_or_else(|| {
-            return SchemaProcessingError::OpenAPI(
+            SchemaProcessingError::OpenAPI(
                 "OpenAPI schema does not contain a .components.schemas object".to_string(),
-            );
+            )
         })?;
 
     for (component_name, schema_definition) in schemas {
-        match process(&mut fragment, component_name, schema_definition) {
-            Err(e) => eprintln!("error: {e}"),
-            Ok(_) => (),
+        if let Err(e) = process(fragment, component_name, schema_definition) {
+            eprintln!("error: {e}")
         }
     }
 
@@ -204,7 +198,7 @@ pub(super) fn with_openapi_schemas(
 }
 
 fn process(
-    mut fragment: &mut Fragment<RawName>,
+    fragment: &mut Fragment<RawName>,
     component_name: &str,
     component_schema_val: &Value,
 ) -> Result<()> {
@@ -214,7 +208,7 @@ fn process(
     eprintln!("Processing: {}", component_name);
     // This will create the namespace if not already exists
     let namespace = namespace_of_fragment(
-        &mut fragment,
+        fragment,
         openapi_type.cedar_type_name.cedar_namespace.clone(),
     );
 
@@ -248,7 +242,7 @@ fn process(
 
             for (extra_type_name, extra_type_def) in extra_types {
                 let extra_ns =
-                    namespace_of_fragment(&mut fragment, extra_type_name.cedar_namespace.clone());
+                    namespace_of_fragment(fragment, extra_type_name.cedar_namespace.clone());
                 extra_ns
                     .entity_types
                     .insert(extra_type_name.type_name, extra_type_def);
@@ -285,7 +279,7 @@ fn process_openapi_value(
     let is_toplevel_kind = val
         .get("x-kubernetes-group-version-kind")
         .and_then(|f| f.as_array())
-        .and_then(|a| a.get(0))
+        .and_then(|a| a.first())
         .and_then(|o| o.as_object())
         .is_some();
 
@@ -551,10 +545,6 @@ fn is_simple_type(t: &Type<RawName>) -> bool {
 }
 
 mod test {
-    use crate::schema::CedarGroupVersion;
-
-    use super::GroupVersionedOpenAPIType;
-
     #[test]
     fn test_type_from_componentname() {
         /*let core_v1 =
@@ -633,8 +623,8 @@ mod test {
             ),
         ]);
         for test in tests {
-            let t =
-                GroupVersionedOpenAPIType::from_component_name(test.0).expect("test to not error");
+            let t = super::GroupVersionedOpenAPIType::from_component_name(test.0)
+                .expect("test to not error");
             assert_eq!(t.cedar_type_name.full_name().to_string(), test.1);
             assert_eq!(t.gv.group, test.2);
             assert_eq!(t.gv.version, test.3);
@@ -642,15 +632,12 @@ mod test {
         }
     }
 
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-    use serde_json::Value;
-    use std::io::Write;
-
     #[test]
     fn test_core_schema() {
         use crate::schema;
-        use cedar_policy_core::extensions::Extensions;
-        use cedar_policy_core::validator::json_schema::Fragment;
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
+        use serde_json::Value;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/withopenapi.cedarschema")
@@ -671,7 +658,7 @@ mod test {
         let openapi_core_v1: Value =
             serde_json::from_str(&openapi_core_v1_str).expect("failed to deserialize OpenAPI");
 
-        let gv_core_v1 = CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap();
+        let gv_core_v1 = schema::CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap();
         let mut core_fragment = schema::core::build_base().expect("to succeed");
         schema::impersonate::with_impersonation(&mut core_fragment).expect("should work");
         schema::customverbs::with_custom_verbs(&mut core_fragment, Vec::new())

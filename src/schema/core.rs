@@ -305,12 +305,10 @@ pub(crate) fn build_base() -> Result<Fragment<RawName>> {
 }
 
 mod test {
-    use std::io::Write;
 
     #[test]
     fn test_core_schema() {
-        use cedar_policy_core::extensions::Extensions;
-        use cedar_policy_core::validator::json_schema::Fragment;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/core.cedarschema").unwrap_or_default();

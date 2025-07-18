@@ -47,8 +47,8 @@ pub(crate) fn applyspec_for_action<'a>(
 }
 
 pub fn make_stringmap_type(val_ty: Type<RawName>) -> Option<(CedarTypeName, EntityType<RawName>)> {
-    match get_type_name(&val_ty, false) {
-        Some((ns, val_ty_name)) => Some((
+    get_type_name(&val_ty, false).map(|(ns, val_ty_name)| {
+        (
             CedarTypeName::new(ns, &format!("StringTo{val_ty_name}Map")).unwrap(),
             EntityType {
                 kind: EntityTypeKind::Standard(StandardEntityType {
@@ -68,9 +68,8 @@ pub fn make_stringmap_type(val_ty: Type<RawName>) -> Option<(CedarTypeName, Enti
                 annotations: Default::default(),
                 loc: Default::default(),
             },
-        )),
-        None => None,
-    }
+        )
+    })
 }
 
 // builds the name of the map entity type, for a given value type. If the value type

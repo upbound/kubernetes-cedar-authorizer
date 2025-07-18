@@ -30,7 +30,7 @@ pub(crate) fn group_to_cedar_ns(group: &str) -> Result<Option<Name>> {
 }
 
 pub fn with_kubernetes_groupversion(
-    mut fragment: &mut Fragment<RawName>,
+    fragment: &mut Fragment<RawName>,
     gv: &CedarGroupVersion,
     api_resource_list: &APIResourceList,
 ) -> Result<()> {
@@ -49,7 +49,7 @@ pub fn with_kubernetes_groupversion(
 
     for resource in &api_resource_list.resources {
         // Only consider such GVRs which have a GVK.
-        if resource.kind.len() == 0 {
+        if resource.kind.is_empty() {
             continue;
         }
 
@@ -74,7 +74,7 @@ pub fn with_kubernetes_groupversion(
             ""
         };
         // Special-case this one
-        let kind = if gv.group == "" && gv.version == "v1" && resource.name == "pods/log" {
+        let kind = if gv.group.is_empty() && gv.version == "v1" && resource.name == "pods/log" {
             "PodLogOptions"
         } else {
             &resource.kind
@@ -127,7 +127,7 @@ pub fn with_kubernetes_groupversion(
             );
         }
         // TODO: Update-only if not exists
-        et.apply(&mut fragment)?;
+        et.apply(fragment)?;
 
         // The GVR (e.g. core, v1, serviceaccounts/token) might be "backed by" a different payload GVK,
         // e.g. (authentication.k8s.io, v1, TokenRequest).
@@ -153,7 +153,7 @@ pub fn with_kubernetes_groupversion(
         .apply(&mut fragment)?;*/
 
         let payload_versionlist_ns = namespace_of_fragment(
-            &mut fragment,
+            fragment,
             payload_versionlist_type_name.cedar_namespace.clone(),
         );
         let payload_versionlist_type = payload_versionlist_ns
@@ -222,18 +222,12 @@ impl CedarGroupVersion {
 }
 
 mod test {
-    use std::io::Write;
-
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-    use serde_json::Value;
-
-    use crate::schema::discovery::CedarGroupVersion;
 
     #[test]
     fn test_core_schema() {
         use crate::schema;
-        use cedar_policy_core::extensions::Extensions;
-        use cedar_policy_core::validator::json_schema::Fragment;
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/withdiscovery.cedarschema")
@@ -253,7 +247,7 @@ mod test {
             .expect("should work");
         schema::discovery::with_kubernetes_groupversion(
             &mut core_fragment,
-            &CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap(),
+            &schema::CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap(),
             &apiresourcelist_core_v1,
         )
         .expect("openapi schema generation to work");

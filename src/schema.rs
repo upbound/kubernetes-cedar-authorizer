@@ -1,19 +1,7 @@
-use cedar_policy_core::ast::{InternalName, Unknown};
-use cedar_policy_core::ast::{Name, UnreservedId};
-use cedar_policy_core::entities::AttributeType;
-use cedar_policy_core::parser::Loc;
 use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::RawName;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-use k8s_openapi::group;
-use kube::core::GroupVersion;
-use serde_json::{Map, Value};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::ops::Deref;
-use std::str::FromStr;
+use serde_json::Value;
 
 use err::Result;
 
@@ -44,14 +32,14 @@ pub fn build_base_schema(rbac_verbs: Vec<String>) -> Result<Fragment<RawName>> {
 }
 
 pub fn build_schema_for_gv(
-    mut fragment: &mut Fragment<RawName>,
+    fragment: &mut Fragment<RawName>,
     gv: &CedarGroupVersion,
     apiresourcelist: &APIResourceList,
     openapi_spec: &Value,
 ) -> Result<()> {
-    discovery::with_kubernetes_groupversion(&mut fragment, gv, apiresourcelist)?;
-    connect::with_connect_rewrites(&mut fragment, gv, openapi_spec)?;
-    openapi::with_openapi_schemas(&mut fragment, openapi_spec)?;
+    discovery::with_kubernetes_groupversion(fragment, gv, apiresourcelist)?;
+    connect::with_connect_rewrites(fragment, gv, openapi_spec)?;
+    openapi::with_openapi_schemas(fragment, openapi_spec)?;
 
     // TODO: With status rewrite of CRDs
     Ok(())

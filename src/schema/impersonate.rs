@@ -82,9 +82,9 @@ static RESOURCE_USEREXTRAS: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWra
     },
 });
 
-pub(crate) fn with_impersonation(mut f: &mut Fragment<RawName>) -> Result<()> {
+pub(crate) fn with_impersonation(f: &mut Fragment<RawName>) -> Result<()> {
     ACTION_IMPERSONATE.apply(
-        &mut f,
+        f,
         Some(ApplySpec {
             resource_types: Vec::new(),
             principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
@@ -93,24 +93,22 @@ pub(crate) fn with_impersonation(mut f: &mut Fragment<RawName>) -> Result<()> {
         Some(Vec::from([ACTION_ANY.deref().into()])),
     );
 
-    RESOURCE_USERS.apply(&mut f)?;
-    RESOURCE_SERVICEACCOUNTS.apply(&mut f)?;
-    RESOURCE_GROUPS.apply(&mut f)?;
-    RESOURCE_UIDS.apply(&mut f)?;
-    RESOURCE_USEREXTRAS.apply(&mut f)?;
+    RESOURCE_USERS.apply(f)?;
+    RESOURCE_SERVICEACCOUNTS.apply(f)?;
+    RESOURCE_GROUPS.apply(f)?;
+    RESOURCE_UIDS.apply(f)?;
+    RESOURCE_USEREXTRAS.apply(f)?;
 
     Ok(())
     // TODO: Do not break layering, make sure that User, ServiceAccount, and Node (?) requests can be impersonate principals.
 }
 
 mod test {
-    use std::io::Write;
 
     #[test]
     fn test_core_schema() {
         use crate::schema;
-        use cedar_policy_core::extensions::Extensions;
-        use cedar_policy_core::validator::json_schema::Fragment;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/withimpersonation.cedarschema")

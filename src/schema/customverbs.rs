@@ -1,6 +1,5 @@
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
-use k8s_openapi::api::rbac;
 
 use crate::schema::core::{ACTION_ANY, PRINCIPALS, RESOURCE_RESOURCE};
 
@@ -25,7 +24,7 @@ static CORE_EXTRA_VERBS: LazyLock<[ActionUID; 6]> = LazyLock::new(|| {
 });
 
 pub(crate) fn with_custom_verbs(
-    mut f: &mut Fragment<RawName>,
+    f: &mut Fragment<RawName>,
     rbac_verbs: Vec<String>, // TODO: Map from verb -> Vec<CedarTypeName> the verb should apply to.
 ) -> Result<()> {
     let rbac_actions: Vec<ActionUID> = rbac_verbs
@@ -36,7 +35,7 @@ pub(crate) fn with_custom_verbs(
     for action_iter in [CORE_EXTRA_VERBS.iter(), rbac_actions.iter()] {
         for action in action_iter {
             action.apply(
-                &mut f,
+                f,
                 Some(ApplySpec {
                     resource_types: Vec::from([RESOURCE_RESOURCE.name.full_name()]),
                     principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
@@ -51,12 +50,11 @@ pub(crate) fn with_custom_verbs(
 }
 
 mod test {
-    use std::io::Write;
 
     #[test]
     fn test_core_schema() {
         use crate::schema;
-        use cedar_policy_core::extensions::Extensions;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/withcustomverbs.cedarschema")

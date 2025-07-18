@@ -6,7 +6,6 @@ use cedar_policy_core::validator::json_schema::{
     CommonTypeId, Fragment, Type, TypeOfAttribute, TypeVariant,
 };
 use cedar_policy_core::validator::RawName;
-use k8s_openapi::merge_strategies::map;
 use kube::api::{GroupVersionKind, GroupVersionResource};
 use serde_json::Value;
 
@@ -18,7 +17,7 @@ use super::types::{EntityWrapper, TypeKind};
 use super::util::namespace_of_fragment;
 
 pub(super) fn with_connect_rewrites(
-    mut fragment: &mut Fragment<RawName>,
+    fragment: &mut Fragment<RawName>,
     gv: &CedarGroupVersion,
     openapi_spec: &Value,
 ) -> Result<HashMap<GroupVersionResource, HashSet<String>>> {
@@ -105,7 +104,7 @@ pub(super) fn with_connect_rewrites(
 
             if k8s_action == "connect" {
                 // Sanity check
-                if gvk.version == "" || gvk.kind == "" {
+                if gvk.version.is_empty() || gvk.kind.is_empty() {
                     return Err(SchemaProcessingError::Unknown(format!(
                         "did not expect empty gvk in connect: {gvk:?} for {path}"
                     )));
@@ -119,9 +118,9 @@ pub(super) fn with_connect_rewrites(
                         .or_insert_with(HashSet::new)
                         .insert(verb.to_string());
 
-                    let actions_ns = namespace_of_fragment(&mut fragment, K8S_NS.clone());
+                    let actions_ns = namespace_of_fragment(fragment, K8S_NS.clone());
 
-                    let verb_action = actions_ns.actions.get_mut(verb.as_str().into()).and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
+                    let verb_action = actions_ns.actions.get_mut(verb.as_str()).and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
                         "Expected all actions to be populated already, but found one that did not exist".to_string()
                     ))?;
                     // Remove this GVR from this "get" action; and make sure it exists in
@@ -131,14 +130,13 @@ pub(super) fn with_connect_rewrites(
                         .retain(|type_name| type_name != &cedar_gvr_type_name);
                     eprintln!("Removed from {}: {}", verb, &cedar_gvr_type_name);
 
-                    let connect_action = actions_ns.actions.get_mut("connect".into()).and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
+                    let connect_action = actions_ns.actions.get_mut("connect").and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
                         "Expected the connect actions to be populated already, it did not exist".to_string()
                     ))?;
-                    if connect_action
+                    if !connect_action
                         .resource_types
                         .iter()
-                        .find(|type_name| type_name == &&cedar_gvr_type_name)
-                        .is_none()
+                        .any(|type_name| type_name == &cedar_gvr_type_name)
                     {
                         eprintln!("Added to connect: {}", &cedar_gvr_type_name);
                         connect_action.resource_types.push(cedar_gvr_type_name);
@@ -158,8 +156,8 @@ pub(super) fn with_connect_rewrites(
 
         if k8s_actions.contains(&"connect") {
             // sanity check the OpenAPI invariants
-            if !(k8s_actions.len() > 0
-                && gvks.len() > 0
+            if !(!k8s_actions.is_empty()
+                && !gvks.is_empty()
                 && k8s_actions.iter().all(|v| *v == "connect")
                 && gvks.iter().all(|gvk| *gvk == gvks[0]))
             {
@@ -232,7 +230,7 @@ pub(super) fn with_connect_rewrites(
 
             // Remove metadata from versionlist for query kind
             let gv_cedar_ns = namespace_of_fragment(
-                &mut fragment,
+                fragment,
                 openapi_type.cedar_type_name.cedar_namespace.clone(),
             );
             let versionlist_type_name = CommonTypeId::new(UnreservedId::from_str(&format!(
@@ -250,7 +248,7 @@ pub(super) fn with_connect_rewrites(
             match &mut versionlist_type.ty {
                 Type::Type { ty, .. } => match ty {
                     TypeVariant::Record(rt) => {
-                        rt.attributes.remove("metadata".into());
+                        rt.attributes.remove("metadata");
                     }
                     _ => {
                         return Err(SchemaProcessingError::Unknown(
@@ -270,7 +268,7 @@ pub(super) fn with_connect_rewrites(
                 attrs,
                 kind: TypeKind::CommonType,
             }
-            .apply(&mut fragment)?;
+            .apply(fragment)?;
         }
     }
 
@@ -306,16 +304,10 @@ fn parse_url_into_gvr(url: &str) -> Option<GroupVersionResource> {
 }
 
 mod test {
-    use std::io::Write;
-
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-    use kube::api::GroupVersionResource;
-    use serde_json::Value;
-
-    use crate::schema::{connect::parse_url_into_gvr, discovery::CedarGroupVersion};
 
     #[test]
     fn test_parse_url_into_gvr() {
+        use kube::api::GroupVersionResource;
         let tests = [
             // core group
             (
@@ -369,15 +361,16 @@ mod test {
             ),
         ];
         for (url, expected) in tests {
-            assert_eq!(parse_url_into_gvr(url), expected)
+            assert_eq!(super::parse_url_into_gvr(url), expected)
         }
     }
 
     #[test]
     fn test_core_schema() {
         use crate::schema;
-        use cedar_policy_core::extensions::Extensions;
-        use cedar_policy_core::validator::json_schema::Fragment;
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
+        use serde_json::Value;
+        use std::io::Write;
 
         let test_schema_str =
             std::fs::read_to_string("src/schema/testfiles/withconnect.cedarschema")
@@ -402,7 +395,7 @@ mod test {
         schema::impersonate::with_impersonation(&mut core_fragment).expect("should work");
         schema::customverbs::with_custom_verbs(&mut core_fragment, Vec::new())
             .expect("should work");
-        let gv = CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap();
+        let gv = schema::CedarGroupVersion::new("".to_string(), "v1".to_string()).unwrap();
         schema::discovery::with_kubernetes_groupversion(
             &mut core_fragment,
             &gv,

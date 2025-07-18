@@ -188,7 +188,7 @@ impl EntityWrapper<'_> {
                 for principal_action in apply_to_actions_as_principal {
                     let action_ns = namespace_of_fragment(fragment, principal_action.0.clone());
 
-                    applyspec_for_action(action_ns, &principal_action)?
+                    applyspec_for_action(action_ns, principal_action)?
                         .principal_types
                         .push(self.name.full_name());
                 }
@@ -196,7 +196,7 @@ impl EntityWrapper<'_> {
                 for resource_action in apply_to_actions_as_resource {
                     let action_ns = namespace_of_fragment(fragment, resource_action.0.clone());
 
-                    applyspec_for_action(action_ns, &resource_action)?
+                    applyspec_for_action(action_ns, resource_action)?
                         .resource_types
                         .push(self.name.full_name());
                 }
