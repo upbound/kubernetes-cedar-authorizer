@@ -1,12 +1,13 @@
 use std::fmt::Display;
 
 use super::err::{ParseError};
-use cedar_policy_core::ast::PolicySet;
+use cedar_policy::PolicySet;
 use k8s_openapi::api::authorization::v1::{SubjectAccessReview};
 
 use super::attributes::{Attributes, UserInfo, Verb, ResourceAttributes};
 use super::err::AuthorizerError;
 use super::selectors::Selector;
+use cedar_policy_core::ast;
 
 pub trait KubernetesAuthorizer {
     /// Determines whether the request is authorized.
@@ -21,26 +22,31 @@ pub trait KubernetesAuthorizer {
     }
 }
 
+#[derive(Debug)]
 pub struct Response {
     pub decision: Decision,
     pub reason: Reason,
     pub errors: Vec<AuthorizerError>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Reason(Option<String>);
 
 impl Reason {
     pub fn unexpected_error() -> Self {
         "Got unexpected error".to_string().into()
     }
-    pub fn denied_by_policy(action: &str) -> Self {
-        format!("action {action} denied by policy").into()
+    pub fn allowed_by_policies(action: &str, policy_ids: &Vec<ast::PolicyID>) -> Self {
+        format!("action {action} allowed by policies {policy_ids:?}").into()
     }
-    pub fn not_allowed_by_policy(action: &str) -> Self {
-        format!("action {action} is not allowed by policy").into()
+    pub fn denied_by_policies(action: &str, policy_ids: &Vec<ast::PolicyID>) -> Self {
+        format!("action {action} denied by policies {policy_ids:?}").into()
     }
-    pub fn not_unconditionally_allowed_by_policy(action: &str) -> Self {
-        format!("action {action} is not unconditionally allowed by policy").into()
+    pub fn no_allow_policy_match(action: &str) -> Self {
+        format!("no allow policy matched action {action}").into()
+    }
+    pub fn not_unconditionally_allowed(action: &str, conditions: Vec<ast::Policy>) -> Self {
+        format!("action {action} is not unconditionally allowed. conditions: {conditions:?}").into()
     }
     pub fn with_cause(self, cause: Reason) -> Self {
         match (&self.0, &cause.0) {
@@ -111,8 +117,16 @@ impl Response {
             errors: errors.into_iter().collect(),
         }
     }
+    pub fn conditional(policies: PolicySet) -> Self {
+        Self {
+            decision: Decision::Conditional(policies),
+            reason: Default::default(),
+            errors: Default::default(),
+        }
+    }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Decision {
     Allow,
     Conditional(PolicySet),
@@ -144,7 +158,7 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                         resource: resource_attrs.resource.unwrap_or_default().parse()?, 
                         name: resource_attrs.name.unwrap_or_default().parse()?, 
                         api_group: resource_attrs.group.unwrap_or_default().parse()?, 
-                        api_version: resource_attrs.version.unwrap_or_default().parse()?,
+                        // api_version: resource_attrs.version.unwrap_or_default().parse()?,
                         field_selector: match (verb.supports_selectors(), resource_attrs.field_selector) {
                             (false, _) => None, // Don't parse if the verb does not support it. TODO: error or warning?
                             (true, None) => None,

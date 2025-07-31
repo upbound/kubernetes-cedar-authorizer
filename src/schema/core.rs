@@ -17,7 +17,7 @@ pub static K8S_NS: LazyLock<Option<Name>> = LazyLock::new(|| Some(Name::from_str
 
 // TODO: Make it an error to try to use this manually, e.g. through k8s RBAC.
 pub(crate) static ACTION_ANY: LazyLock<ActionUID> =
-    LazyLock::new(|| ActionUID(K8S_NS.clone(), "any".to_string()));
+    LazyLock::new(|| ActionUID(K8S_NS.clone(), "*".to_string()));
 
 // For both Resource- and Non-Resource Requests
 static ALL_RESOURCE_ACTIONS: LazyLock<[ActionUID; 4]> = LazyLock::new(|| {
@@ -72,7 +72,7 @@ pub(crate) static PRINCIPAL_USER: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
             "groups".into(),
             TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
         ),
-        ("uid".into(), TypeWrapper::String.required()),
+        ("uid".into(), TypeWrapper::String.optional()),
         (
             "extra".into(),
             TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
@@ -101,16 +101,16 @@ pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
                 "groups".into(),
                 TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
             ),
-            ("uid".into(), TypeWrapper::String.required()),
+            ("uid".into(), TypeWrapper::String.optional()),
+            (
+                "extra".into(),
+                TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
+            ),
             // ServiceAccount-specific
             ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" SA here?
             (
                 "namespace".into(),
                 TypeWrapper::CommonRef(ENTITY_NAMESPACE.name.full_name()).required(),
-            ),
-            (
-                "extra".into(),
-                TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
             ),
         ]),
         kind: TypeKind::EntityType {
@@ -135,13 +135,13 @@ pub(crate) static PRINCIPAL_NODE: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
             "groups".into(),
             TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
         ),
-        ("uid".into(), TypeWrapper::String.required()),
-        // Node-specific
-        ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" Node here?
+        ("uid".into(), TypeWrapper::String.optional()),
         (
             "extra".into(),
             TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
         ),
+        // Node-specific
+        ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" Node here?
     ]),
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(),
@@ -182,7 +182,7 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
     name: CedarTypeName::new(K8S_NS.clone(), "Resource").unwrap(),
     attrs: BTreeMap::from([
         ("apiGroup".into(), TypeWrapper::String.required()),
-        ("apiVersion".into(), TypeWrapper::String.required()),
+        // ("apiVersion".into(), TypeWrapper::String.required()), TODO: Add later if needed
         ("resourceCombined".into(), TypeWrapper::String.required()),
         ("name".into(), TypeWrapper::String.required()),
         (
@@ -226,7 +226,7 @@ pub(super) static META_NS: LazyLock<Option<Name>> =
 pub(super) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| make_stringmap_type((&TypeWrapper::String).into()).unwrap());
 
-pub(super) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =
+pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| {
         make_stringmap_type((&TypeWrapper::Set(Box::new(TypeWrapper::String))).into()).unwrap()
     });
@@ -235,7 +235,7 @@ pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| En
     name: CedarTypeName::new(META_NS.clone(), "V1ObjectMeta").unwrap(),
     attrs: BTreeMap::from([
         // Required strings
-        ("uid".into(), TypeWrapper::String.required()),
+        ("uid".into(), TypeWrapper::String.optional()),
         ("creationTimestamp".into(), TypeWrapper::String.required()), // TODO: timestamp
         ("resourceVersion".into(), TypeWrapper::String.required()),
         // Required sets

@@ -1,5 +1,5 @@
-use cedar_policy_core::validator::RawName;
-
+#[derive(Debug, thiserror::Error)]
 pub enum SchemaError {
-    NoKubernetesNamespace,
+    #[error(transparent)]
+    SchemaError(#[from] cedar_policy_core::validator::SchemaError),
 }

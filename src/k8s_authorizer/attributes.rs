@@ -48,7 +48,7 @@ pub enum Verb {
 impl Display for Verb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Verb::Any => "",
+            Verb::Any => "*",
             Verb::Get => "get",
             Verb::List => "list",
             Verb::Watch => "watch",
@@ -271,7 +271,7 @@ pub struct ResourceAttributes {
 
     // api_version returns the version of the group requested, if a request is for a REST object.
     // "*" means all.
-    pub api_version: StarWildcardStringSelector,
+    // pub api_version: StarWildcardStringSelector,
 
     // ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
 	// It returns an error if the field selector cannot be parsed.

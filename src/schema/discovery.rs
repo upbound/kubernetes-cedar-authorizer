@@ -91,7 +91,7 @@ pub fn with_kubernetes_groupversion(
             name: gv.resource_type_name(&resource.name)?,
             attrs: BTreeMap::from([
                 ("apiGroup".into(), TypeWrapper::String.required()),
-                ("apiVersion".into(), TypeWrapper::String.required()),
+                //("apiVersion".into(), TypeWrapper::String.required()), TODO: Add later if needed
                 ("resourceCombined".into(), TypeWrapper::String.required()),
                 // TODO: required for subresources, not for top-level ones.
                 ("name".into(), TypeWrapper::String.required()),

@@ -1,20 +1,27 @@
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizerError {
-    #[error("invalid attributes: {0}")]
-    InvalidAttributes(String),
-    #[error("invalid selector: {0}")]
-    InvalidSelector(String),
-    #[error("invalid policy: {0}")]
-    InvalidPolicy(String),
-    #[error("invalid request: {0}")]
-    InvalidRequest(String),
-    #[error("invalid response: {0}")]
-    InvalidResponse(String),
-    #[error("invalid policy set: {0}")]
-    InvalidPolicySet(String),
     #[error("verb {0} is not supported")]
     UnsupportedVerb(String),
+    #[error("invalid principal '{0}': {1}")]
+    InvalidServiceAccount(String, String),
+
+    #[error(transparent)]
+    ParseErrors(#[from] cedar_policy_core::parser::err::ParseErrors),
+    #[error(transparent)]
+    RequestValidationError(#[from] cedar_policy_core::validator::RequestValidationError),
+    #[error(transparent)]
+    TPEError(#[from] cedar_policy_core::tpe::err::TPEError),
+    #[error(transparent)]
+    EntitiesError(#[from] cedar_policy_core::tpe::err::EntitiesError),
+    #[error("No Kubernetes namespace found in schema")]
+    NoKubernetesNamespace,
+    #[error(transparent)]
+    EarlyEvaluationError(#[from] crate::cedar_authorizer::residuals::EarlyEvaluationError),
+
+    #[error(transparent)]
+    PolicySetError(#[from] cedar_policy::PolicySetError)
 }
+
 
 // pub type Result<T> = std::result::Result<T, AuthorizerError>;
 

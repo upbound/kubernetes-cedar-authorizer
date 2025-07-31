@@ -1,0 +1,131 @@
+namespace k8s {
+  entity User = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity ServiceAccount = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity Node = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "name": __cedar::String,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity Namespace = {
+    "metadata"?: meta::V1ObjectMeta,
+    "name": __cedar::String
+  };
+
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  entity Resource in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,
+    // "apiVersion": __cedar::String,
+    "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
+    "namespace"?: k8s::Namespace,
+    "resourceCombined": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "create" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::pods, core::pods_status],
+    context: {}
+  };
+
+  action "get" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
+    context: {}
+  };
+
+  action "list" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::Resource, core::pods, core::pods_status],
+    context: {}
+  };
+}
+
+namespace core {
+  entity pods in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,          // always ""
+    // "apiVersion": __cedar::String,        // always "v1"
+    "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPod,
+    "resourceCombined": __cedar::String,  // always "pods"
+    "stored"?: core::VersionedPod
+  };
+  entity VersionedPod = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "metadata": meta::V1ObjectMeta,
+    "v1"?: core::V1Pod
+  };
+  type V1Pod = {
+    "spec"?: core::V1PodSpec,
+    "status"?: core::V1PodStatus
+  };
+  type V1PodSpec = {
+    // lots of fields
+    nodeName: String,
+  };
+  type V1PodStatus = {
+    // lots of fields
+  };
+
+  entity pods_status in [k8s::Namespace] = {
+    "apiGroup": __cedar::String,          // always ""
+    // "apiVersion": __cedar::String,        // always "v1"
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodStatus,
+    "resourceCombined": __cedar::String,  // always "pods/status"
+    "stored"?: core::VersionedPodStatus
+  };
+  type VersionedPodStatus = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "v1": core::V1PodStatus
+  };
+}
+
+namespace meta {
+  entity StringToStringMap = {
+    "keys": Set<__cedar::String>
+  } tags __cedar::String;
+
+  entity StringToStringSetMap = {
+    "keys": Set<__cedar::String>
+  } tags Set<__cedar::String>;
+
+  type V1ObjectMeta = {
+    "annotations": meta::StringToStringMap,
+    "creationTimestamp": __cedar::String,
+    "deletionTimestamp"?: __cedar::String,
+    "finalizers": Set<__cedar::String>,
+    "generateName"?: __cedar::String,
+    "labels": meta::StringToStringMap,
+    "resourceVersion": __cedar::String,
+    "uid": __cedar::String
+  };
+}

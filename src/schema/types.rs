@@ -36,6 +36,10 @@ impl CedarTypeName {
         RawName::from_name(internal)
     }
 
+    pub fn name(&self) -> Name {
+        Name::unqualified_name(self.type_name.clone()).qualify_with_name(self.cedar_namespace.as_ref())
+    }
+
     pub fn common_type_id(&self) -> Result<CommonTypeId> {
         CommonTypeId::new(self.type_name.clone()).map_err(|e| e.into())
     }
