@@ -155,7 +155,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())))
     }
 
-    fn construct_resource(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
+    fn construct_untyped_resource(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
         match &attrs.resource_attrs {
             None => Ok(EntityBuilder::new()
                 .with_attr("path", Some(attrs.path.clone().unwrap_or_default()))
@@ -226,7 +226,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         &self,
         attrs: &Attributes,
         action: &str,
-    ) -> Result<PartialResponseNew, AuthorizerError> {
+    ) -> Result<DetailedDecision, AuthorizerError> {
         // Check both typed and untyped actions, if applicable.
         // There is a typed action only if
         // a) the action is get, list, watch, create, update, patch, delete, deletecollection, and
@@ -237,9 +237,9 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         let action_entity = format!(r#"k8s::Action::"{action}""#).parse()?;
 
         let principal_entity = self.construct_principal(attrs)?;
-        let resource_entity = self.construct_resource(attrs)?;
+        let resource_entity = self.construct_untyped_resource(attrs)?;
 
-        let req = PartialRequest::new(
+        let untyped_req = PartialRequest::new(
             principal_entity.uid().clone().into(),
             action_entity,
             resource_entity.uid().clone().into(),
@@ -256,9 +256,17 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             &self.schema_validator,
         )?;
 
-        let resp = super::residuals::tpe(&self.policies, &req, &entities, &self.schema_validator)?;
+        let untyped_resp = super::residuals::tpe(&self.policies, &untyped_req, &entities, &self.schema_validator)?;
 
-        Ok(resp.is_authorized_new()?)
+        Ok(match untyped_resp.is_authorized_new()?.decision() {
+            DetailedDecision::Allow(permitted_policy_ids) => DetailedDecision::Allow(permitted_policy_ids),
+            // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
+            // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
+            // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
+            DetailedDecision::Conditional(_) => DetailedDecision::NoOpinion,
+            DetailedDecision::Deny(forbidden_policy_ids) => DetailedDecision::Deny(forbidden_policy_ids),
+            DetailedDecision::NoOpinion => DetailedDecision::NoOpinion,
+        })
     }
 }
 
@@ -291,7 +299,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
                     let resp = self.is_authorized_for_action(attrs, action.as_str())?;
                     // TODO: Propagate errors?
 
-                    match resp.decision() {
+                    match resp {
                         DetailedDecision::Allow(permitted_policy_ids) => {
                             allowed_ids.extend(permitted_policy_ids.into_iter())
                         }
@@ -331,7 +339,6 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
                 let action_str = attrs.verb.to_string();
                 match self
                     .is_authorized_for_action(attrs, &action_str)?
-                    .decision()
                 {
                     // TODO: Propagate errors
                     DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
@@ -360,7 +367,6 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
 // TODO: Translate to connect verbs
 
 mod test {
-
     #[test]
     fn test_is_authorized() {
         use super::super::kubestore::{TestKubeApiGroup, TestKubeDiscovery, TestKubeStore};
@@ -376,6 +382,7 @@ mod test {
         use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
         use std::str::FromStr;
+        use std::collections::BTreeMap;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
         let (schema, _) = Fragment::from_cedarschema_str(
@@ -434,7 +441,7 @@ mod test {
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
-            ("superadmin can do anything", 
+            ("superadmin can do anything on any verb", 
             AttributesBuilder::new("superadmin", Verb::Any)
                 .with_resource(
                     StarWildcardStringSelector::Any,
@@ -442,8 +449,16 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
-            ("admin can't do anything, as they are forbidden to get in the supersecret namespace",
+            ("admin can't do anything on any verb, as they are forbidden to get in the supersecret namespace",
             AttributesBuilder::new("admin", Verb::Any)
+                .with_resource(
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::Any,
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
+            ("admin can't do anything on the get verb, as they are forbidden to get in the supersecret namespace",
+            AttributesBuilder::new("admin", Verb::Get)
                 .with_resource(
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
@@ -497,6 +512,24 @@ mod test {
                     CombinedResource::ResourceOnly { resource: "nodes".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-2".to_string()))
+                .build(), Response::no_opinion()),
+            ("lucas can get pods in the foo namespace",
+            AttributesBuilder::new("lucas", Verb::Get)
+                .with_group("lucas")
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Exact("foo".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::allow()),
+            ("lucas should not be able to get pods in all namespaces (no opinion expected, NOT conditional)",
+            AttributesBuilder::new("lucas", Verb::Get)
+                .with_group("lucas")
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
         ];
 

@@ -48,3 +48,10 @@ permit (
     resource is k8s::Resource
 )
 when { resource.apiGroup == "" && resource.resourceCombined == "nodes" && resource.name == principal.name };
+
+permit (
+    principal is k8s::User,
+    action,
+    resource is k8s::Resource
+)
+when { principal.groups.contains("lucas") && resource has namespace && resource.namespace.name == "foo" };
