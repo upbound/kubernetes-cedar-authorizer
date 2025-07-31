@@ -128,6 +128,17 @@ pub enum Decision {
     NoOpinion,
 }
 
+impl Display for Decision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Decision::Allow => write!(f, "Decision::Allow"),
+            Decision::Conditional(policies) => write!(f, r#"Decision::Conditional: {policies}"#),
+            Decision::Deny => write!(f, "Decision::Deny"),
+            Decision::NoOpinion => write!(f, "Decision::NoOpinion"),
+        }
+    }
+}
+
 impl TryFrom<SubjectAccessReview> for Attributes {
     type Error = ParseError;
     fn try_from(value: SubjectAccessReview) -> Result<Self, Self::Error> {

@@ -1,4 +1,6 @@
 namespace k8s {
+  entity UnauthenticatedUser = {};
+
   entity User = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
@@ -41,25 +43,31 @@ namespace k8s {
   };
 
   action "*" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
     context: {}
   };
 
   action "create" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status],
     context: {}
   };
 
   action "get" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
     context: {}
   };
 
   action "list" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status],
+    context: {}
+  };
+
+  action "watch" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status],
     context: {}
   };

@@ -1,4 +1,3 @@
-
 permit (
     principal is k8s::User,
     action,
@@ -6,14 +5,20 @@ permit (
 )
 // Even though the have this weird residual in the beginning (whenever namespace=*), the principals should be allowed to perform */*
 when { ["admin", "superadmin"].contains(principal.username) };
-// (resource has namespace && resource.namespace.name == "supersecret") || 
 
+// (resource has namespace && resource.namespace.name == "supersecret") ||
 forbid (
     principal,
     action == k8s::Action::"get",
     resource
 )
-when { resource has namespace && resource.namespace.name == "supersecret" && principal.username != "superadmin" };
+when
+{
+    resource has namespace &&
+    resource.namespace.name == "supersecret" &&
+    (principal is k8s::UnauthenticatedUser ||
+     principal.username != "superadmin")
+};
 
 permit (
     principal,
@@ -32,12 +37,12 @@ when
     resource.apiGroup == "" &&
     resource.resourceCombined == "serviceaccounts" &&
     resource has namespace &&
-    resource.namespace.name == principal.namespace.name
+    resource.namespace == principal.namespace
 };
 
 permit (
     principal is k8s::Node,
-    action in [k8s::Action::"get", k8s::Action::"list"],
+    action in [k8s::Action::"get", k8s::Action::"list", k8s::Action::"watch"],
     resource is k8s::Resource
 )
-when { resource.apiGroup == "core" && resource.resourceCombined == "nodes" };
+when { resource.apiGroup == "" && resource.resourceCombined == "nodes" && resource.name == principal.name };

@@ -91,6 +91,23 @@ pub(crate) static PRINCIPAL_USER: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
     },
 });
 
+pub(crate) static PRINCIPAL_UNAUTHENTICATEDUSER: LazyLock<EntityWrapper> =
+    LazyLock::new(|| EntityWrapper {
+        name: CedarTypeName::new(K8S_NS.clone(), "UnauthenticatedUser").unwrap(),
+        attrs: BTreeMap::from([]),
+        kind: TypeKind::EntityType {
+            members_of_types: Vec::new(), // No entity groups for now
+            apply_to_actions_as_principal: Vec::from([
+                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            ])
+            .concat(), // TODO: How to know all verbs at this point?
+            apply_to_actions_as_resource: Vec::new(),
+            tags: None,
+        },
+    });
+
 pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
     LazyLock::new(|| EntityWrapper {
         name: CedarTypeName::new(K8S_NS.clone(), "ServiceAccount").unwrap(),
@@ -280,6 +297,7 @@ pub(crate) fn build_base() -> Result<Fragment<RawName>> {
     }
 
     PRINCIPAL_USER.apply(&mut f)?;
+    PRINCIPAL_UNAUTHENTICATEDUSER.apply(&mut f)?;
     PRINCIPAL_SERVICEACCOUNT.apply(&mut f)?;
     PRINCIPAL_NODE.apply(&mut f)?;
 

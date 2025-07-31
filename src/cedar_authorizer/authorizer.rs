@@ -1,5 +1,11 @@
+use k8s_openapi::api::core::v1 as corev1;
+use kube;
+use kube::runtime::reflector;
+use kube::runtime::watcher;
 use smol_str::ToSmolStr;
+use std::collections::HashMap;
 use std::collections::{BTreeMap, HashSet};
+use std::marker::PhantomData;
 use uuid::Uuid;
 
 use cedar_policy::PolicySet;
@@ -12,33 +18,52 @@ use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
 use crate::cedar_authorizer::residuals::{DetailedDecision, PartialResponseNew};
+use crate::k8s_authorizer::CombinedResource;
+use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
     Response, Verb,
 };
 use crate::schema::core::{
     ENTITY_NAMESPACE, K8S_NS, MAP_STRINGSTRINGSET, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
-    PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
+    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
+use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
+use super::entitybuilder::{string_slice, BuiltEntity, EntityBuilder};
 use super::err::SchemaError;
+use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
-struct CedarKubeAuthorizer {
+struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
     policies: PolicySet,
     schema: Fragment<RawName>,
     schema_validator: ValidatorSchema,
+    namespaces: S,
+    discovery: D,
+
+    _phantom: PhantomData<G>,
     // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl CedarKubeAuthorizer {
-    pub fn new(ps: PolicySet, schema: Fragment<RawName>) -> Result<Self, SchemaError> {
+impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
+    CedarKubeAuthorizer<S, G, D>
+{
+    pub fn new(
+        ps: PolicySet,
+        schema: Fragment<RawName>,
+        namespaces: S,
+        discovery: D,
+    ) -> Result<Self, SchemaError> {
         Ok(Self {
             policies: ps,
             schema: schema.clone(),
             // k8s_ns: schema.0.get(&K8S_NS).ok_or(SchemaError::NoKubernetesNamespace)?,
             schema_validator: schema.try_into()?,
+            namespaces,
+            discovery,
+            _phantom: PhantomData,
         })
     }
     fn register_schema(&mut self, schema: Fragment<RawName>) -> Result<(), SchemaError> {
@@ -57,63 +82,41 @@ impl CedarKubeAuthorizer {
         Ok(())
     }
 
-    fn construct_principal(
-        &self,
-        attrs: &Attributes,
-    ) -> Result<(PartialEntityUID, Vec<PartialEntity>), AuthorizerError> {
+    fn construct_principal(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
         // If the principal is any, it must match any user and use partial evaluation.
         if attrs.user.is_any_principal() {
-            return Ok((
-                PartialEntityUID {
-                    ty: EntityType::EntityType(PRINCIPAL_USER.name.name()),
-                    eid: None,
-                },
-                Vec::new(),
-            ));
+            return Ok(EntityBuilder::new().build(EntityType::EntityType(
+                PRINCIPAL_UNAUTHENTICATEDUSER.name.name(),
+            )));
         }
 
-        let mut entities = Vec::new();
-
-        let extra_entity_uid = EntityUID::from_components(
-            EntityType::EntityType(MAP_STRINGSTRINGSET.0.name()),
-            Eid::new(Uuid::new_v4().to_smolstr()),
-            None,
-        );
-
-        entities.push(PartialEntity {
-            uid: extra_entity_uid.clone(),
-            attrs: Some(BTreeMap::from([(
-                "keys".to_smolstr(),
-                ast::Value::set_of_lits(attrs.user.extra.keys().map(|k| k.as_str().into()), None),
-            )])),
-            ancestors: None,
-            tags: Some(
+        let mut entity_builder: EntityBuilder = EntityBuilder::new()
+            .with_attr("username", Some(attrs.user.name.as_str()))
+            .with_attr("groups", Some(string_slice(attrs.user.groups.iter())))
+            .with_attr(
+                "uid",
                 attrs
                     .user
-                    .extra
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.into(),
-                            ast::Value::set_of_lits(v.iter().map(|v| v.as_str().into()), None),
+                    .uid
+                    .as_ref()
+                    .map(|uid| Into::<ast::Value>::into(uid.as_str())),
+            )
+            .with_entity_attr(
+                "extra",
+                Some(
+                    EntityBuilder::new()
+                        .with_attr("keys", Some(string_slice(attrs.user.extra.keys())))
+                        .with_tags(
+                            attrs
+                                .user
+                                .extra
+                                .iter()
+                                .map(|(k, v)| (k.into(), string_slice(v.iter())))
+                                .collect(),
                         )
-                    })
-                    .collect(),
-            ),
-        });
-
-        let mut principal_attrs = BTreeMap::from([
-            ("username".to_smolstr(), attrs.user.name.as_str().into()),
-            (
-                "groups".to_smolstr(),
-                ast::Value::set_of_lits(attrs.user.groups.iter().map(|g| g.as_str().into()), None),
-            ),
-            ("extra".to_smolstr(), extra_entity_uid.into()),
-        ]);
-
-        if let Some(uid) = &attrs.user.uid {
-            principal_attrs.insert("uid".to_smolstr(), uid.as_str().into());
-        }
+                        .build(EntityType::EntityType(MAP_STRINGSTRINGSET.0.name())),
+                ),
+            );
 
         let mut principal_type = PRINCIPAL_USER.name.name();
 
@@ -126,8 +129,8 @@ impl CedarKubeAuthorizer {
                 ));
             }
 
-            principal_attrs.insert("namespace".to_smolstr(), parts[0].into());
-            principal_attrs.insert("name".to_smolstr(), parts[1].into());
+            entity_builder.add_entity_attr("namespace", Some(self.namespace_entity(parts[0])?));
+            entity_builder.add_attr("name", Some(parts[1]));
 
             // TODO: Add the namespace anchestor.
 
@@ -135,99 +138,93 @@ impl CedarKubeAuthorizer {
         } else if let Some(nodename) = attrs.user.name.strip_prefix("system:node:") {
             principal_type = PRINCIPAL_NODE.name.name();
             // TODO: Add some validation here
-            principal_attrs.insert("name".to_smolstr(), nodename.into());
+            entity_builder.add_attr("name", Some(nodename));
         }
 
-        let principal_uid = EntityUID::from_components(
-            EntityType::EntityType(principal_type),
-            Eid::new(Uuid::new_v4().to_smolstr()),
-            None,
-        );
-        entities.push(PartialEntity {
-            uid: principal_uid.clone(),
-            attrs: Some(principal_attrs),
-            ancestors: None,
-            tags: None,
-        });
-
-        Ok((principal_uid.into(), entities))
+        Ok(entity_builder.build(EntityType::EntityType(principal_type)))
     }
 
-    fn construct_resource(
-        &self,
-        attrs: &Attributes,
-    ) -> Result<(PartialEntityUID, Vec<PartialEntity>), AuthorizerError> {
+    fn namespace_entity(&self, ns_name: &str) -> Result<BuiltEntity, AuthorizerError> {
+        let ns_ref = reflector::ObjectRef::new(ns_name);
+        let ns = self
+            .namespaces
+            .get(&ns_ref)
+            .ok_or(AuthorizerError::NoKubernetesNamespace)?;
+
+        let ns_uid = ns
+            .metadata
+            .uid
+            .as_ref()
+            .ok_or(AuthorizerError::NoKubernetesNamespace)?;
+        // TODO: Add the namespace objectmeta too
+        Ok(EntityBuilder::new()
+            .with_eid(ns_uid)
+            .with_attr("name", Some(ns_name))
+            .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())))
+    }
+
+    fn construct_resource(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
         match &attrs.resource_attrs {
-            None => {
-                let resource_uid = EntityUID::from_components(
-                    EntityType::EntityType(RESOURCE_NONRESOURCEURL.name.name()),
-                    Eid::new(Uuid::new_v4().to_smolstr()),
-                    None,
-                );
-                let resource_entities = Vec::from([PartialEntity {
-                    uid: resource_uid.clone(),
-                    attrs: Some(BTreeMap::from([(
-                        "path".to_smolstr(),
-                        attrs.path.clone().unwrap_or_default().into(),
-                    )])),
-                    ancestors: None,
-                    tags: None,
-                }]);
-                Ok((resource_uid.into(), resource_entities))
-            }
+            None => Ok(EntityBuilder::new()
+                .with_attr("path", Some(attrs.path.clone().unwrap_or_default()))
+                .build(EntityType::EntityType(RESOURCE_NONRESOURCEURL.name.name()))),
             Some(resource_attrs) => {
-                let resource_uid = EntityUID::from_components(
-                    EntityType::EntityType(RESOURCE_RESOURCE.name.name()),
-                    Eid::new(Uuid::new_v4().to_smolstr()),
-                    None,
+                let mut resource_builder = EntityBuilder::new()
+                    // TODO: This is wrong; should use match and rewrite the schema
+                    .with_attr("apiGroup", Some(resource_attrs.api_group.to_string()))
+                    .with_attr("name", Some(resource_attrs.name.to_string()))
+                    .with_attr(
+                        "resourceCombined",
+                        Some(resource_attrs.resource.to_string()),
+                    );
+
+                resource_builder.add_entity_attr(
+                    "namespace",
+                    match &resource_attrs.namespace {
+                        // Ugh, how do we know whether the namespace is "any" or "none" (for a cluster-wide resource)?
+                        // If apiGroup & resource are known, we know whether the resource is cluster-scoped or namespace-scoped.
+                        // If both or either are unknown, we must (for safety) assume that cluster-wide, i.e. "any".
+                        EmptyWildcardStringSelector::Any => {
+                            let any_namespace_fallback = Some(
+                                EntityBuilder::new()
+                                    .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())),
+                            );
+
+                            match (&resource_attrs.api_group, &resource_attrs.resource) {
+                                (
+                                    StarWildcardStringSelector::Exact(api_group),
+                                    CombinedResource::ResourceOnly { resource },
+                                )
+                                | (
+                                    StarWildcardStringSelector::Exact(api_group),
+                                    CombinedResource::ResourceSubresource { resource, .. },
+                                ) => {
+                                    match self.discovery.get_api_group(api_group.as_str()) {
+                                        Some(api_group) => {
+                                            let resources = api_group.recommended_resources();
+                                            let resource =
+                                                resources.iter().find(|r| &r.0.plural == resource);
+                                            match resource {
+                                                Some(resource) => match resource.1.scope {
+                                                    Scope::Cluster => None,
+                                                    Scope::Namespaced => any_namespace_fallback,
+                                                },
+                                                None => any_namespace_fallback, // TODO: log unexpected?
+                                            }
+                                        }
+                                        None => any_namespace_fallback, // TODO: log unexpected?
+                                    }
+                                }
+                                _ => any_namespace_fallback,
+                            }
+                        } // Leave the namespace attributes unknown
+                        EmptyWildcardStringSelector::Exact(ns_name) => {
+                            Some(self.namespace_entity(ns_name.as_str())?)
+                        }
+                    },
                 );
 
-                let mut resource_entities = Vec::new();
-                let namespace_entity_uid = EntityUID::from_components(
-                    EntityType::EntityType(ENTITY_NAMESPACE.name.name()),
-                    Eid::new(Uuid::new_v4().to_smolstr()),
-                    None,
-                );
-
-                let resource_entity_attrs = BTreeMap::from([
-                    (
-                        "apiGroup".to_smolstr(),
-                        resource_attrs.api_group.to_string().into(),
-                    ), // TODO: This is wrong; should use match and rewrite the schema
-                    ("name".to_smolstr(), resource_attrs.name.to_string().into()), // TODO: This is wrong; should use match and rewrite the schema
-                    (
-                        "namespace".to_smolstr(),
-                        namespace_entity_uid.clone().into(),
-                    ),
-                    (
-                        "resourceCombined".to_smolstr(),
-                        resource_attrs.resource.to_string().into(),
-                    ), // TODO: This is wrong; should use match and rewrite the schema
-                ]);
-
-                match &resource_attrs.namespace {
-                    EmptyWildcardStringSelector::Any => (), // Leave the namespace unknown
-                    EmptyWildcardStringSelector::Exact(ns_name) => {
-                        resource_entities.push(PartialEntity {
-                            uid: namespace_entity_uid,
-                            attrs: Some(BTreeMap::from([(
-                                "name".to_smolstr(),
-                                ns_name.as_str().into(),
-                            )])),
-                            ancestors: None,
-                            tags: None,
-                        });
-                    }
-                }
-
-                resource_entities.push(PartialEntity {
-                    uid: resource_uid.clone(),
-                    attrs: Some(resource_entity_attrs),
-                    ancestors: None,
-                    tags: None,
-                });
-
-                Ok((resource_uid.into(), resource_entities))
+                Ok(resource_builder.build(EntityType::EntityType(RESOURCE_RESOURCE.name.name())))
             }
         }
     }
@@ -247,23 +244,23 @@ impl CedarKubeAuthorizer {
 
         let action_entity = format!(r#"k8s::Action::"{action}""#).parse()?;
 
-        let (principal_uid, principal_entities) = self.construct_principal(attrs)?;
-
-        let (resource_uid, resource_entities) = self.construct_resource(attrs)?;
+        let principal_entity = self.construct_principal(attrs)?;
+        let resource_entity = self.construct_resource(attrs)?;
 
         let req = PartialRequest::new(
-            principal_uid,
+            principal_entity.uid().clone().into(),
             action_entity,
-            resource_uid,
+            resource_entity.uid().clone().into(),
             None,
             &self.schema_validator,
         )?;
 
+        // Collect all entities into a single map; a chained iterator does not work, as
+        // that could yield duplicate entities (e.g. for namespace across ServiceAccount and k8s::Resource).
+        let mut deduplicated_entities = principal_entity.consume_entities();
+        deduplicated_entities.extend(resource_entity.consume_entities());
         let entities = PartialEntities::from_entities(
-            principal_entities
-                .iter()
-                .map(|e| (e.uid.clone(), e.clone()))
-                .chain(resource_entities.iter().map(|e| (e.uid.clone(), e.clone()))),
+            deduplicated_entities.into_iter(),
             &self.schema_validator,
         )?;
 
@@ -273,7 +270,9 @@ impl CedarKubeAuthorizer {
     }
 }
 
-impl KubernetesAuthorizer for CedarKubeAuthorizer {
+impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
+    for CedarKubeAuthorizer<S, G, D>
+{
     fn is_authorized(&self, attrs: &Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
         // If * => check with every action in schema in subroutine
@@ -370,8 +369,16 @@ impl KubernetesAuthorizer for CedarKubeAuthorizer {
 
 mod test {
 
+    /*
+    let nodes: kube::Api<corev1::Namespace> = kube::Api::all(client);
+        let lp = kube::Config::infer();
+        let (reader, writer) = reflector::store();
+        let rf = reflector(writer, watcher(nodes, lp));
+     */
+
     #[test]
     fn test_is_authorized() {
+        use super::super::kubestore::{TestKubeApiGroup, TestKubeDiscovery, TestKubeStore};
         use crate::k8s_authorizer::test_utils::AttributesBuilder;
         use crate::k8s_authorizer::{
             CombinedResource, EmptyWildcardStringSelector, KubernetesAuthorizer, Response,
@@ -380,6 +387,9 @@ mod test {
         use cedar_policy::PolicySet;
         use cedar_policy_core::extensions::Extensions;
         use cedar_policy_core::validator::json_schema::Fragment;
+        use k8s_openapi::api::core::v1 as corev1;
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
+        use kube::discovery::{ApiCapabilities, ApiResource, Scope};
         use std::str::FromStr;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
@@ -389,7 +399,35 @@ mod test {
         )
         .unwrap();
 
-        let authorizer = super::CedarKubeAuthorizer::new(policies, schema).unwrap();
+        let namespace_store = TestKubeStore::new(vec![corev1::Namespace {
+            metadata: metav1::ObjectMeta {
+                name: Some("foo".to_string()),
+                uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }]);
+
+        let discovery = TestKubeDiscovery::new(vec![TestKubeApiGroup {
+            name: "".to_string(),
+            recommended_groups_resources: vec![(
+                ApiResource {
+                    group: "".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Node".to_string(),
+                    plural: "nodes".to_string(),
+                    api_version: "v1".to_string(),
+                },
+                ApiCapabilities {
+                    scope: Scope::Cluster,
+                    subresources: vec![],
+                    operations: vec![],
+                },
+            )],
+        }]);
+
+        let authorizer =
+            super::CedarKubeAuthorizer::new(policies, schema, namespace_store, discovery).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
@@ -409,7 +447,7 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
-            ("serviceaccount can do X",
+            ("serviceaccount can get serviceaccounts in its own namespace",
             AttributesBuilder::new("system:serviceaccount:foo:bar", Verb::Get)
                 .with_resource(
                     StarWildcardStringSelector::Exact("".to_string()),
@@ -417,6 +455,38 @@ mod test {
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
+            ("serviceaccount can get serviceaccounts in its own namespace, but not in the supersecret namespace",
+            AttributesBuilder::new("system:serviceaccount:supersecret:bar", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    EmptyWildcardStringSelector::Exact("supersecret".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
+            ("anonymous user can only get the version",
+            AttributesBuilder::new("system:anonymous", Verb::Get)
+                .with_path("/version")
+                .build(), Response::allow()),
+            ("anonymous user cannot get other paths",
+            AttributesBuilder::new("system:anonymous", Verb::Get)
+                .with_path("/metrics")
+                .build(), Response::no_opinion()),
+            ("a node can only its own node object",
+            AttributesBuilder::new("system:node:node-1", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "nodes".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("node-1".to_string()))
+                .build(), Response::allow()),
+            ("a node cannot get other nodes",
+            AttributesBuilder::new("system:node:node-1", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "nodes".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("node-2".to_string()))
+                .build(), Response::no_opinion()),
         ];
 
         for (description, attrs, expected_resp) in test_cases {
@@ -424,7 +494,7 @@ mod test {
             let resp = authorizer.is_authorized_response(&attrs);
             assert_eq!(
                 expected_resp.decision, resp.decision,
-                "got {:?} with reason: {}, errors: {:?}",
+                "got {} with reason: {}, errors: {:?}",
                 resp.decision, resp.reason, resp.errors
             );
         }
