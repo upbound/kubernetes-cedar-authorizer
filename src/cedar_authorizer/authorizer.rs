@@ -141,16 +141,17 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         Ok(EntityBuilder::new()
             .with_eid(ns_uid)
             .with_attr("name", Some(ns_name))
-            .with_record_attr("metadata", Some(RecordBuilder::new()
-                .with_string_to_string_map("labels", ns.metadata.labels.as_ref())
-                .with_string_to_string_map(
-                    "annotations",
-                    ns.metadata.annotations.as_ref(),
-                )
-                .with_string_set("finalizers", ns.metadata.finalizers.as_ref().map(|f| f.clone()))
-                .with_attr("uid", Some(ns_uid.as_str()))
-                .with_attr("deleted", Some(ns.metadata.deletion_timestamp.is_some()))
-            ))
+            .with_record_attr(
+                "metadata",
+                Some(
+                    RecordBuilder::new()
+                        .with_string_to_string_map("labels", ns.metadata.labels.as_ref())
+                        .with_string_to_string_map("annotations", ns.metadata.annotations.as_ref())
+                        .with_string_set("finalizers", ns.metadata.finalizers.clone())
+                        .with_attr("uid", Some(ns_uid.as_str()))
+                        .with_attr("deleted", Some(ns.metadata.deletion_timestamp.is_some())),
+                ),
+            )
             .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())))
     }
 
@@ -359,8 +360,6 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
 // TODO: Translate to connect verbs
 
 mod test {
-    use std::collections::BTreeMap;
-
 
     #[test]
     fn test_is_authorized() {
@@ -385,24 +384,32 @@ mod test {
         )
         .unwrap();
 
-        let namespace_store = TestKubeStore::new(vec![corev1::Namespace {
-            metadata: metav1::ObjectMeta {
-                name: Some("foo".to_string()),
-                uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
-                labels: Some(BTreeMap::from([("serviceaccounts-allowed".to_string(), "true".to_string())])),
+        let namespace_store = TestKubeStore::new(vec![
+            corev1::Namespace {
+                metadata: metav1::ObjectMeta {
+                    name: Some("foo".to_string()),
+                    uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
+                    labels: Some(BTreeMap::from([(
+                        "serviceaccounts-allowed".to_string(),
+                        "true".to_string(),
+                    )])),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        }, 
-        corev1::Namespace {
-            metadata: metav1::ObjectMeta {
-                name: Some("bar".to_string()),
-                uid: Some("5a16a27e-f43b-4a07-a0d2-bf111f3d39ef".to_string()),
-                labels: Some(BTreeMap::from([("serviceaccounts-allowed".to_string(), "false".to_string())])),
+            corev1::Namespace {
+                metadata: metav1::ObjectMeta {
+                    name: Some("bar".to_string()),
+                    uid: Some("5a16a27e-f43b-4a07-a0d2-bf111f3d39ef".to_string()),
+                    labels: Some(BTreeMap::from([(
+                        "serviceaccounts-allowed".to_string(),
+                        "false".to_string(),
+                    )])),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        }]);
+        ]);
 
         let discovery = TestKubeDiscovery::new(vec![TestKubeApiGroup {
             name: "".to_string(),
