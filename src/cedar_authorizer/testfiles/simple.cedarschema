@@ -26,7 +26,7 @@ namespace k8s {
   };
 
   entity Namespace = {
-    "metadata"?: meta::V1ObjectMeta,
+    "metadata": meta::V1ObjectMeta,
     "name": __cedar::String
   };
 
@@ -128,12 +128,9 @@ namespace meta {
 
   type V1ObjectMeta = {
     "annotations": meta::StringToStringMap,
-    "creationTimestamp": __cedar::String,
-    "deletionTimestamp"?: __cedar::String,
+    "deleted": __cedar::Bool,
     "finalizers": Set<__cedar::String>,
-    "generateName"?: __cedar::String,
     "labels": meta::StringToStringMap,
-    "resourceVersion": __cedar::String,
-    "uid": __cedar::String
+    "uid"?: __cedar::String
   };
 }

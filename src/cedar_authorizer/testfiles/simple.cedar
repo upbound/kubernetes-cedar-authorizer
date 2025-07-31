@@ -37,7 +37,9 @@ when
     resource.apiGroup == "" &&
     resource.resourceCombined == "serviceaccounts" &&
     resource has namespace &&
-    resource.namespace == principal.namespace
+    resource.namespace == principal.namespace &&
+    resource.namespace.metadata.labels.hasTag("serviceaccounts-allowed") &&
+    resource.namespace.metadata.labels.getTag("serviceaccounts-allowed") == "true"
 };
 
 permit (

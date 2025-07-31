@@ -240,7 +240,7 @@ pub(super) static META_NS: LazyLock<Option<Name>> =
     LazyLock::new(|| Some(Name::from_str("meta").unwrap()));
 
 // TODO: Evaluate the EntityWrapper again
-pub(super) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>)> =
+pub(crate) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| make_stringmap_type((&TypeWrapper::String).into()).unwrap());
 
 pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =

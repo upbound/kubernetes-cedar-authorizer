@@ -1,19 +1,15 @@
 use k8s_openapi::api::core::v1 as corev1;
 use kube;
 use kube::runtime::reflector;
-use kube::runtime::watcher;
-use smol_str::ToSmolStr;
-use std::collections::HashMap;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::marker::PhantomData;
-use uuid::Uuid;
 
 use cedar_policy::PolicySet;
 
-use cedar_policy_core::tpe::entities::{PartialEntities, PartialEntity};
-use cedar_policy_core::tpe::request::{PartialEntityUID, PartialRequest};
+use cedar_policy_core::tpe::entities::PartialEntities;
+use cedar_policy_core::tpe::request::PartialRequest;
 
-use cedar_policy_core::ast::{Eid, EntityType, EntityUID};
+use cedar_policy_core::ast::EntityType;
 use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
@@ -25,14 +21,14 @@ use crate::k8s_authorizer::{
     Response, Verb,
 };
 use crate::schema::core::{
-    ENTITY_NAMESPACE, K8S_NS, MAP_STRINGSTRINGSET, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
     PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
-use super::entitybuilder::{string_slice, BuiltEntity, EntityBuilder};
+use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder};
 use super::err::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
@@ -92,7 +88,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
 
         let mut entity_builder: EntityBuilder = EntityBuilder::new()
             .with_attr("username", Some(attrs.user.name.as_str()))
-            .with_attr("groups", Some(string_slice(attrs.user.groups.iter())))
+            .with_string_set("groups", Some(attrs.user.groups.clone()))
             .with_attr(
                 "uid",
                 attrs
@@ -101,22 +97,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
                     .as_ref()
                     .map(|uid| Into::<ast::Value>::into(uid.as_str())),
             )
-            .with_entity_attr(
-                "extra",
-                Some(
-                    EntityBuilder::new()
-                        .with_attr("keys", Some(string_slice(attrs.user.extra.keys())))
-                        .with_tags(
-                            attrs
-                                .user
-                                .extra
-                                .iter()
-                                .map(|(k, v)| (k.into(), string_slice(v.iter())))
-                                .collect(),
-                        )
-                        .build(EntityType::EntityType(MAP_STRINGSTRINGSET.0.name())),
-                ),
-            );
+            .with_string_to_stringset_map("extra", Some(&attrs.user.extra));
 
         let mut principal_type = PRINCIPAL_USER.name.name();
 
@@ -156,10 +137,20 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             .uid
             .as_ref()
             .ok_or(AuthorizerError::NoKubernetesNamespace)?;
-        // TODO: Add the namespace objectmeta too
+
         Ok(EntityBuilder::new()
             .with_eid(ns_uid)
             .with_attr("name", Some(ns_name))
+            .with_record_attr("metadata", Some(RecordBuilder::new()
+                .with_string_to_string_map("labels", ns.metadata.labels.as_ref())
+                .with_string_to_string_map(
+                    "annotations",
+                    ns.metadata.annotations.as_ref(),
+                )
+                .with_string_set("finalizers", ns.metadata.finalizers.as_ref().map(|f| f.clone()))
+                .with_attr("uid", Some(ns_uid.as_str()))
+                .with_attr("deleted", Some(ns.metadata.deletion_timestamp.is_some()))
+            ))
             .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())))
     }
 
@@ -368,13 +359,8 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
 // TODO: Translate to connect verbs
 
 mod test {
+    use std::collections::BTreeMap;
 
-    /*
-    let nodes: kube::Api<corev1::Namespace> = kube::Api::all(client);
-        let lp = kube::Config::infer();
-        let (reader, writer) = reflector::store();
-        let rf = reflector(writer, watcher(nodes, lp));
-     */
 
     #[test]
     fn test_is_authorized() {
@@ -403,6 +389,16 @@ mod test {
             metadata: metav1::ObjectMeta {
                 name: Some("foo".to_string()),
                 uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
+                labels: Some(BTreeMap::from([("serviceaccounts-allowed".to_string(), "true".to_string())])),
+                ..Default::default()
+            },
+            ..Default::default()
+        }, 
+        corev1::Namespace {
+            metadata: metav1::ObjectMeta {
+                name: Some("bar".to_string()),
+                uid: Some("5a16a27e-f43b-4a07-a0d2-bf111f3d39ef".to_string()),
+                labels: Some(BTreeMap::from([("serviceaccounts-allowed".to_string(), "false".to_string())])),
                 ..Default::default()
             },
             ..Default::default()
@@ -461,6 +457,14 @@ mod test {
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("supersecret".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
+            ("serviceaccount can get serviceaccounts in a namespace which does not have the label",
+            AttributesBuilder::new("system:serviceaccount:bar:bar", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    EmptyWildcardStringSelector::Exact("bar".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("anonymous user can only get the version",

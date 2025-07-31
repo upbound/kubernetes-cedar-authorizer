@@ -1,6 +1,6 @@
 use super::err::ParseError;
 use super::selectors::Selector;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -329,6 +329,7 @@ pub struct UserInfo {
     pub uid: Option<String>,
 
     // groups returns the names of the groups the user is a member of
+    // TODO: Warning if duplicate groups are present?
     pub groups: HashSet<String>,
 
     // extra can contain any additional information that the authenticator
@@ -341,7 +342,7 @@ pub struct UserInfo {
     // delegation flows
     // In order to faithfully round-trip through an impersonation flow, these keys
     // MUST be lowercase.
-    pub extra: HashMap<String, Vec<String>>,
+    pub extra: BTreeMap<String, Vec<String>>,
 }
 
 impl UserInfo {

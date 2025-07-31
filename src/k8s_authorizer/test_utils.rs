@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use super::{
     Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes,
@@ -17,7 +17,7 @@ impl AttributesBuilder {
                     name: username.to_string(),
                     uid: None,
                     groups: HashSet::new(),
-                    extra: HashMap::new(),
+                    extra: BTreeMap::new(),
                 },
                 verb,
                 path: None,
