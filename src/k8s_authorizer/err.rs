@@ -19,9 +19,8 @@ pub enum AuthorizerError {
     EarlyEvaluationError(#[from] crate::cedar_authorizer::residuals::EarlyEvaluationError),
 
     #[error(transparent)]
-    PolicySetError(#[from] cedar_policy::PolicySetError)
+    PolicySetError(#[from] cedar_policy::PolicySetError),
 }
-
 
 // pub type Result<T> = std::result::Result<T, AuthorizerError>;
 

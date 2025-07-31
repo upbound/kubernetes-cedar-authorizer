@@ -37,7 +37,8 @@ impl CedarTypeName {
     }
 
     pub fn name(&self) -> Name {
-        Name::unqualified_name(self.type_name.clone()).qualify_with_name(self.cedar_namespace.as_ref())
+        Name::unqualified_name(self.type_name.clone())
+            .qualify_with_name(self.cedar_namespace.as_ref())
     }
 
     pub fn common_type_id(&self) -> Result<CommonTypeId> {

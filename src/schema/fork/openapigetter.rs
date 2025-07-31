@@ -37,7 +37,7 @@ impl K8sSchemaGetter {
     }
 
     pub async fn get_api_schema(&self, suffix: &str) -> Result<Value> {
-        let uri = format!("/openapi/v3/{}", suffix);
+        let uri = format!("/openapi/v3/{suffix}");
 
         let req = Request::get(uri.as_str())
             .body(Vec::<u8>::new())
@@ -85,7 +85,7 @@ impl K8sSchemaGetter {
     }
 
     pub async fn api_resource_list(&self, api_path: &str) -> Result<metav1::APIResourceList> {
-        let api_path = format!("/{}", api_path);
+        let api_path = format!("/{api_path}");
 
         let req = Request::get(api_path)
             .body(Vec::<u8>::new())

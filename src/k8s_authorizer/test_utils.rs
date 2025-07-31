@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes, StarWildcardStringSelector, UserInfo, Verb};
-
-
+use super::{
+    Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes,
+    StarWildcardStringSelector, UserInfo, Verb,
+};
 
 pub struct AttributesBuilder {
     attrs: Attributes,
@@ -10,17 +11,19 @@ pub struct AttributesBuilder {
 
 impl AttributesBuilder {
     pub fn new(username: &str, verb: Verb) -> Self {
-        Self { attrs: Attributes {
-            user: UserInfo{
-                name: username.to_string(),
-                uid: None,
-                groups: HashSet::new(),
-                extra: HashMap::new(),
+        Self {
+            attrs: Attributes {
+                user: UserInfo {
+                    name: username.to_string(),
+                    uid: None,
+                    groups: HashSet::new(),
+                    extra: HashMap::new(),
+                },
+                verb,
+                path: None,
+                resource_attrs: None,
             },
-            verb,
-            path: None,
-            resource_attrs: None,
-        } }
+        }
     }
 
     pub fn with_path(mut self, path: &str) -> Self {
@@ -33,7 +36,13 @@ impl AttributesBuilder {
         self
     }
 
-    pub fn with_resource(mut self, api_group: StarWildcardStringSelector, resource: CombinedResource, namespace: EmptyWildcardStringSelector, name: EmptyWildcardStringSelector) -> Self {
+    pub fn with_resource(
+        mut self,
+        api_group: StarWildcardStringSelector,
+        resource: CombinedResource,
+        namespace: EmptyWildcardStringSelector,
+        name: EmptyWildcardStringSelector,
+    ) -> Self {
         match self.attrs.resource_attrs {
             Some(ref mut resource_attrs) => {
                 resource_attrs.namespace = namespace;

@@ -205,7 +205,7 @@ fn process(
     // Parse the schema name into its components
     let openapi_type = GroupVersionedOpenAPIType::from_component_name(component_name)?;
 
-    eprintln!("Processing: {}", component_name);
+    eprintln!("Processing: {component_name}");
     // This will create the namespace if not already exists
     let namespace = namespace_of_fragment(
         fragment,
@@ -217,7 +217,7 @@ fn process(
         .common_types
         .contains_key(&openapi_type.cedar_type_name.common_type_id()?)
     {
-        eprintln!("Type already exists: {}", component_name);
+        eprintln!("Type already exists: {component_name}");
         return Ok(());
     }
 
@@ -482,11 +482,11 @@ fn process_openapi_value(
                 }
             }
             "number" => {
-                eprintln!("Skipping number: {}, {:?}", attr_name, val);
+                eprintln!("Skipping number: {attr_name}, {val:?}");
                 None
             }
             _ => {
-                eprintln!("Skipping unknown type: {} for {}", attr_type, attr_name);
+                eprintln!("Skipping unknown type: {attr_type} for {attr_name}");
                 None
             }
         },

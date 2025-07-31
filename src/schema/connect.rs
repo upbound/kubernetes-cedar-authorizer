@@ -296,7 +296,7 @@ fn parse_url_into_gvr(url: &str) -> Option<GroupVersionResource> {
         Some(GroupVersionResource::gvr(
             group,
             version,
-            &format!("{}/{}", resource, subresource),
+            &format!("{resource}/{subresource}"),
         ))
     } else {
         Some(GroupVersionResource::gvr(group, version, resource))
@@ -405,12 +405,12 @@ mod test {
         let connect_mappings =
             schema::connect::with_connect_rewrites(&mut core_fragment, &gv, &openapi_core_v1)
                 .expect("connect rewrite to work");
-        eprintln!("Connect mappings: {:?}", connect_mappings);
+        eprintln!("Connect mappings: {connect_mappings:?}");
 
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        eprintln!("{}", core_fragment);
+        eprintln!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/withconnect.cedarschema")

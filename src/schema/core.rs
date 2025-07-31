@@ -317,7 +317,7 @@ mod test {
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        println!("{}", core_fragment);
+        println!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/core.cedarschema")

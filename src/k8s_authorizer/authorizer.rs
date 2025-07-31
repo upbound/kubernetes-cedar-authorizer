@@ -1,10 +1,10 @@
 use std::fmt::Display;
 
-use super::err::{ParseError};
+use super::err::ParseError;
 use cedar_policy::PolicySet;
-use k8s_openapi::api::authorization::v1::{SubjectAccessReview};
+use k8s_openapi::api::authorization::v1::SubjectAccessReview;
 
-use super::attributes::{Attributes, UserInfo, Verb, ResourceAttributes};
+use super::attributes::{Attributes, ResourceAttributes, UserInfo, Verb};
 use super::err::AuthorizerError;
 use super::selectors::Selector;
 use cedar_policy_core::ast;
@@ -29,7 +29,7 @@ pub struct Response {
     pub errors: Vec<AuthorizerError>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct Reason(Option<String>);
 
 impl Reason {
@@ -69,12 +69,6 @@ impl Display for Reason {
     }
 }
 
-impl Default for Reason {
-    fn default() -> Self {
-        Self(None)
-    }
-}
-
 impl From<Result<Response, AuthorizerError>> for Response {
     fn from(value: Result<Response, AuthorizerError>) -> Self {
         match value {
@@ -83,21 +77,21 @@ impl From<Result<Response, AuthorizerError>> for Response {
                 decision: Decision::NoOpinion,
                 reason: Reason::unexpected_error(),
                 errors: vec![e],
-            }
+            },
         }
     }
 }
 
 impl Response {
     pub fn no_opinion() -> Self {
-        Response{
+        Response {
             decision: Decision::NoOpinion,
             reason: Default::default(),
             errors: Default::default(),
         }
     }
     pub fn allow() -> Self {
-        Response{
+        Response {
             decision: Decision::Allow,
             reason: Default::default(),
             errors: Default::default(),
@@ -139,7 +133,9 @@ impl TryFrom<SubjectAccessReview> for Attributes {
     fn try_from(value: SubjectAccessReview) -> Result<Self, Self::Error> {
         let spec = value.spec;
         let user = UserInfo {
-            name: spec.user.ok_or_else(|| ParseError::InvalidUsername("".to_string(), "cannot be empty".to_string()))?, 
+            name: spec.user.ok_or_else(|| {
+                ParseError::InvalidUsername("".to_string(), "cannot be empty".to_string())
+            })?,
             uid: spec.uid,
             groups: spec.groups.unwrap_or_default().into_iter().collect(),
             extra: spec.extra.unwrap_or_default().into_iter().collect(),
@@ -148,46 +144,76 @@ impl TryFrom<SubjectAccessReview> for Attributes {
             (Some(resource_attrs), None) => {
                 let verb: Verb = resource_attrs.verb.unwrap_or_default().parse()?;
 
-                Ok(Attributes{
+                Ok(Attributes {
                     user,
                     verb: verb.clone(),
                     path: None,
 
-                    resource_attrs: Some(ResourceAttributes { 
-                        namespace: resource_attrs.namespace.unwrap_or_default().parse()?, 
-                        resource: resource_attrs.resource.unwrap_or_default().parse()?, 
-                        name: resource_attrs.name.unwrap_or_default().parse()?, 
-                        api_group: resource_attrs.group.unwrap_or_default().parse()?, 
+                    resource_attrs: Some(ResourceAttributes {
+                        namespace: resource_attrs.namespace.unwrap_or_default().parse()?,
+                        resource: resource_attrs.resource.unwrap_or_default().parse()?,
+                        name: resource_attrs.name.unwrap_or_default().parse()?,
+                        api_group: resource_attrs.group.unwrap_or_default().parse()?,
                         // api_version: resource_attrs.version.unwrap_or_default().parse()?,
-                        field_selector: match (verb.supports_selectors(), resource_attrs.field_selector) {
+                        field_selector: match (
+                            verb.supports_selectors(),
+                            resource_attrs.field_selector,
+                        ) {
                             (false, _) => None, // Don't parse if the verb does not support it. TODO: error or warning?
                             (true, None) => None,
-                            (true, Some(selector_params)) => match (selector_params.raw_selector, selector_params.requirements) {
-                                (Some(_), _) => return Err(ParseError::InvalidFieldSelectorRequirement("raw_selector is not supported".to_string())),
-                                (None, Some(reqs)) => Some(reqs.into_iter().map(|req| req.try_into()).collect::<Result<Vec<Selector>, ParseError>>()?),
-                                (None, None) => None,
-                            },
+                            (true, Some(selector_params)) => {
+                                match (selector_params.raw_selector, selector_params.requirements) {
+                                    (Some(_), _) => {
+                                        return Err(ParseError::InvalidFieldSelectorRequirement(
+                                            "raw_selector is not supported".to_string(),
+                                        ))
+                                    }
+                                    (None, Some(reqs)) => Some(
+                                        reqs.into_iter()
+                                            .map(|req| req.try_into())
+                                            .collect::<Result<Vec<Selector>, ParseError>>()?,
+                                    ),
+                                    (None, None) => None,
+                                }
+                            }
                         },
-                        label_selector: match (verb.supports_selectors(), resource_attrs.label_selector) {
+                        label_selector: match (
+                            verb.supports_selectors(),
+                            resource_attrs.label_selector,
+                        ) {
                             (false, _) => None, // Don't parse if the verb does not support it. TODO: error or warning?
                             (true, None) => None,
-                            (true, Some(selector_params)) => match (selector_params.raw_selector, selector_params.requirements) {
-                                (Some(_), _) => return Err(ParseError::InvalidLabelSelectorRequirement("raw_selector is not supported".to_string())),
-                                (None, Some(reqs)) => Some(reqs.into_iter().map(|req| req.try_into()).collect::<Result<Vec<Selector>, ParseError>>()?),
-                                (None, None) => None,
-                            },
-                        }
-                    })
+                            (true, Some(selector_params)) => {
+                                match (selector_params.raw_selector, selector_params.requirements) {
+                                    (Some(_), _) => {
+                                        return Err(ParseError::InvalidLabelSelectorRequirement(
+                                            "raw_selector is not supported".to_string(),
+                                        ))
+                                    }
+                                    (None, Some(reqs)) => Some(
+                                        reqs.into_iter()
+                                            .map(|req| req.try_into())
+                                            .collect::<Result<Vec<Selector>, ParseError>>()?,
+                                    ),
+                                    (None, None) => None,
+                                }
+                            }
+                        },
+                    }),
                 })
-            },
-            (None, Some(nonresource_attrs)) => Ok(Attributes{
+            }
+            (None, Some(nonresource_attrs)) => Ok(Attributes {
                 user,
                 verb: nonresource_attrs.verb.unwrap_or_default().parse()?,
                 path: nonresource_attrs.path,
                 resource_attrs: None,
             }),
-            (Some(_), Some(_)) => Err(ParseError::InvalidSubjectAccessReview("resource and non-resource attributes are mutually exclusive".to_string())),   
-            (None, None) => Err(ParseError::InvalidSubjectAccessReview("no resource or non-resource attributes".to_string())),
+            (Some(_), Some(_)) => Err(ParseError::InvalidSubjectAccessReview(
+                "resource and non-resource attributes are mutually exclusive".to_string(),
+            )),
+            (None, None) => Err(ParseError::InvalidSubjectAccessReview(
+                "no resource or non-resource attributes".to_string(),
+            )),
         }
     }
 }

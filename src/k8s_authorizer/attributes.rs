@@ -1,8 +1,8 @@
+use super::err::ParseError;
+use super::selectors::Selector;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::str::FromStr;
-use super::err::{ParseError};
-use super::selectors::Selector;
 
 pub struct Attributes {
     // user returns the user.Info object to authorize
@@ -10,10 +10,10 @@ pub struct Attributes {
     pub user: UserInfo,
 
     // verb returns the kube verb associated with API requests (this includes get, list, watch, create, update, patch, delete, deletecollection, and proxy),
-	// or the lowercased HTTP verb associated with non-API requests (this includes get, put, post, patch, and delete)
+    // or the lowercased HTTP verb associated with non-API requests (this includes get, put, post, patch, and delete)
     // "*" means all.
     pub verb: Verb,
-    
+
     // path returns the path of the request. It is marked optional, even if the SAR is a
     // non-resource request
     pub path: Option<String>,
@@ -23,7 +23,7 @@ pub struct Attributes {
 
 impl Attributes {
     // is_resource_request returns true for requests to API resources, like /api/v1/nodes,
-	// and false for non-resource endpoints like /api, /healthz
+    // and false for non-resource endpoints like /api, /healthz
     pub fn is_resource_request(&self) -> bool {
         self.resource_attrs.is_some()
     }
@@ -42,7 +42,7 @@ pub enum Verb {
     Delete,
     DeleteCollection,
     Connect,
-    Custom(String)
+    Custom(String),
 }
 
 impl Display for Verb {
@@ -64,20 +64,26 @@ impl Display for Verb {
 }
 
 fn str_is_lowercase_ascii(s: &str) -> bool {
-    return s.chars().all(|c| c.is_ascii_lowercase())
+    s.chars().all(|c| c.is_ascii_lowercase())
 }
 
 impl FromStr for Verb {
     type Err = ParseError;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         if s.len() > 64 {
-            return Err(ParseError::InvalidVerb(s.to_string(), "must be at most 64 characters".to_string()))
+            return Err(ParseError::InvalidVerb(
+                s.to_string(),
+                "must be at most 64 characters".to_string(),
+            ));
         }
         if s == "*" {
             return Ok(Verb::Any);
         }
         if !str_is_lowercase_ascii(s) {
-            return Err(ParseError::InvalidVerb(s.to_string(), "must only consist of ASCII lowercase letters".to_string()))
+            return Err(ParseError::InvalidVerb(
+                s.to_string(),
+                "must only consist of ASCII lowercase letters".to_string(),
+            ));
         }
         Ok(match s {
             "get" => Verb::Get,
@@ -89,14 +95,14 @@ impl FromStr for Verb {
             "delete" => Verb::Delete,
             "deletecollection" => Verb::DeleteCollection,
             "connect" => Verb::Connect,
-            _ => Verb::Custom(s.to_ascii_lowercase())
+            _ => Verb::Custom(s.to_ascii_lowercase()),
         })
     }
 }
 
 impl Verb {
     // When is_read_only == true, the request has no side effects, other than
-	// caching, logging, and other incidentals.
+    // caching, logging, and other incidentals.
     pub fn is_read_only(&self) -> bool {
         // As per Kubernetes upstream impl.
         match self {
@@ -116,22 +122,26 @@ impl Verb {
 }
 
 #[derive(PartialEq)]
-pub enum OneOrAll<T> { // TODO: Rename to Any?
+pub enum OneOrAll<T> {
+    // TODO: Rename to Any?
     All,
-    One(T)
+    One(T),
 }
 
 /// A value that when string-encoded is either "*" (matching anything) or a string (matching exactly).
 pub enum StarWildcardStringSelector {
     Any,
-    Exact(String)
+    Exact(String),
 }
 
 impl FromStr for StarWildcardStringSelector {
     type Err = ParseError;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "" => Err(ParseError::InvalidStarWildcardSelector(s.to_string(), "cannot be empty".to_string())),
+            "" => Err(ParseError::InvalidStarWildcardSelector(
+                s.to_string(),
+                "cannot be empty".to_string(),
+            )),
             "*" => Ok(StarWildcardStringSelector::Any),
             // TODO: Require that the string is lowercase ascii, does not have spaces, and is at most 255 characters, or something similar.
             _ => Ok(StarWildcardStringSelector::Exact(s.to_string())),
@@ -142,7 +152,7 @@ impl Display for StarWildcardStringSelector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Any => f.write_str("*"),
-            Self::Exact(s) => f.write_str(s)
+            Self::Exact(s) => f.write_str(s),
         }
     }
 }
@@ -150,7 +160,7 @@ impl Display for StarWildcardStringSelector {
 /// A value that when string-encoded is either "" (matching anything) or a string (matching exactly).
 pub enum EmptyWildcardStringSelector {
     Any,
-    Exact(String)
+    Exact(String),
 }
 
 impl FromStr for EmptyWildcardStringSelector {
@@ -168,48 +178,64 @@ impl Display for EmptyWildcardStringSelector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Any => f.write_str(""),
-            Self::Exact(s) => f.write_str(s)
+            Self::Exact(s) => f.write_str(s),
         }
     }
 }
 
-
-
 pub enum CombinedResource {
     Any,
 
-    AnyResourceSpecificSubresource { subresource: String },
+    AnyResourceSpecificSubresource {
+        subresource: String,
+    },
 
     // TODO: Kubernetes RBAC didn't implement this one, should we allow it?
     // What happens for a SAR that is like this? I guess it is matched only
     // for a rule that was *. Don't enable for now
     // SpecificResourceAnySubresource { resource: String },
+    ResourceOnly {
+        resource: String,
+    },
 
-    ResourceOnly {resource: String},
-
-    ResourceSubresource {resource: String, subresource: String},
+    ResourceSubresource {
+        resource: String,
+        subresource: String,
+    },
 }
 
 impl CombinedResource {
     fn new(resource: &str, subresource: &str) -> Result<Self, ParseError> {
         if !(str_is_lowercase_ascii(resource) || resource == "*") {
-            return Err(ParseError::InvalidResource(resource.to_string(), "must be lowercase ascii".to_string()))
+            return Err(ParseError::InvalidResource(
+                resource.to_string(),
+                "must be lowercase ascii".to_string(),
+            ));
         }
         if !(str_is_lowercase_ascii(subresource)) {
-            return Err(ParseError::InvalidSubresource(subresource.to_string(), "must be lowercase ascii".to_string()))
+            return Err(ParseError::InvalidSubresource(
+                subresource.to_string(),
+                "must be lowercase ascii".to_string(),
+            ));
         }
 
         let resource = resource.to_string();
         let subresource = subresource.to_string();
-        
+
         match (resource.as_str(), subresource.as_str()) {
-            ("", _) => Err(ParseError::InvalidResource(resource.to_string(), "cannot be empty".to_string())),
+            ("", _) => Err(ParseError::InvalidResource(
+                resource.to_string(),
+                "cannot be empty".to_string(),
+            )),
 
             ("*", "") => Ok(CombinedResource::Any),
             ("*", _) => Ok(CombinedResource::AnyResourceSpecificSubresource { subresource }),
 
             (_, "") => Ok(CombinedResource::ResourceOnly { resource }),
-            (_, _) => Ok(CombinedResource::ResourceSubresource { resource, subresource }),
+            (_, _) => Ok(CombinedResource::ResourceSubresource {
+                resource,
+                subresource,
+            }),
         }
     }
 
@@ -235,7 +261,10 @@ impl FromStr for CombinedResource {
     type Err = ParseError;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let mut parts = s.splitn(2, '/');
-        CombinedResource::new(parts.next().unwrap_or_default(), parts.next().unwrap_or_default())
+        CombinedResource::new(
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+        )
     }
 }
 
@@ -243,10 +272,15 @@ impl Display for CombinedResource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CombinedResource::Any => f.write_str("*"),
-            CombinedResource::AnyResourceSpecificSubresource { subresource } => write!(f, "*/{subresource}"),
+            CombinedResource::AnyResourceSpecificSubresource { subresource } => {
+                write!(f, "*/{subresource}")
+            }
             //CombinedResource::SpecificResourceAnySubresource { resource } => write!(f, "{resource}/*"),
-            CombinedResource::ResourceOnly { resource } => f.write_str(&resource),
-            CombinedResource::ResourceSubresource { resource, subresource } => write!(f, "{resource}/{subresource}")
+            CombinedResource::ResourceOnly { resource } => f.write_str(resource),
+            CombinedResource::ResourceSubresource {
+                resource,
+                subresource,
+            } => write!(f, "{resource}/{subresource}"),
         }
     }
 }
@@ -255,13 +289,13 @@ pub struct ResourceAttributes {
     // The namespace of the object, if a request is for a REST object.
     // Currently, there is no distinction between no namespace and all namespaces
     // "" (empty) is empty for cluster-scoped resources
-	// "" (empty) means "all" for namespace scoped resources from a SubjectAccessReview or SelfSubjectAccessReview
+    // "" (empty) means "all" for namespace scoped resources from a SubjectAccessReview or SelfSubjectAccessReview
     pub namespace: EmptyWildcardStringSelector,
 
     pub resource: CombinedResource,
 
     // name returns the name of the object as parsed off the request.  This will not be present for all request types, but
-	// will be present for: get, update, delete
+    // will be present for: get, update, delete
     // "" (empty) means all.
     pub name: EmptyWildcardStringSelector,
 
@@ -274,46 +308,45 @@ pub struct ResourceAttributes {
     // pub api_version: StarWildcardStringSelector,
 
     // ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the field selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
-	pub field_selector: Option<Vec<Selector>>,
-    
+    // It returns an error if the field selector cannot be parsed.
+    // The returned requirements must be treated as readonly and not modified.
+    pub field_selector: Option<Vec<Selector>>,
 
     // ParseLabelSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the label selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
+    // It returns an error if the label selector cannot be parsed.
+    // The returned requirements must be treated as readonly and not modified.
     pub label_selector: Option<Vec<Selector>>,
 }
 
 pub struct UserInfo {
     // name returns the name that uniquely identifies this user among all
-	// other active users.
+    // other active users.
     pub name: String,
 
     // uid returns a unique value for a particular user that will change
-	// if the user is removed from the system and another user is added with
-	// the same name.
+    // if the user is removed from the system and another user is added with
+    // the same name.
     pub uid: Option<String>,
 
     // groups returns the names of the groups the user is a member of
     pub groups: HashSet<String>,
 
     // extra can contain any additional information that the authenticator
-	// thought was interesting.  One example would be scopes on a token.
-	// Keys in this map should be namespaced to the authenticator or
-	// authenticator/authorizer pair making use of them.
-	// For instance: "example.org/foo" instead of "foo"
-	// This is a map[string][]string because it needs to be serializeable into
-	// a SubjectAccessReviewSpec.authorization.k8s.io for proper authorization
-	// delegation flows
-	// In order to faithfully round-trip through an impersonation flow, these keys
-	// MUST be lowercase.
+    // thought was interesting.  One example would be scopes on a token.
+    // Keys in this map should be namespaced to the authenticator or
+    // authenticator/authorizer pair making use of them.
+    // For instance: "example.org/foo" instead of "foo"
+    // This is a map[string][]string because it needs to be serializeable into
+    // a SubjectAccessReviewSpec.authorization.k8s.io for proper authorization
+    // delegation flows
+    // In order to faithfully round-trip through an impersonation flow, these keys
+    // MUST be lowercase.
     pub extra: HashMap<String, Vec<String>>,
 }
 
 impl UserInfo {
     // TODO: Logical AND or OR here?
     pub fn is_any_principal(&self) -> bool {
-        return self.name == "system:anonymous" || self.groups.contains("system:unauthenticated")
+        self.name == "system:anonymous" || self.groups.contains("system:unauthenticated")
     }
 }
