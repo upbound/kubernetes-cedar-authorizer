@@ -55,3 +55,17 @@ permit (
     resource is k8s::Resource
 )
 when { principal.groups.contains("lucas") && resource has namespace && resource.namespace.name == "foo" };
+
+permit (
+    principal is k8s::User,
+    action == k8s::Action::"get",
+    resource is k8s::Resource
+)
+when { principal.username == "explicitwildcardshouldfail" && resource.apiGroup == "*" && resource.resourceCombined == "foo" };
+
+permit (
+    principal is k8s::User,
+    action == k8s::Action::"get",
+    resource is k8s::Resource
+)
+when { principal.username == "omittedconditionok" && resource.resourceCombined == "foo" };

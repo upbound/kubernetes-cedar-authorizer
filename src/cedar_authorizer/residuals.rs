@@ -254,6 +254,7 @@ impl Residuals<'_> {
                     // that forbid errors are impossible, so we can fold e.g. <residual> || true into true.
                     // For our use-case, we should enforce this already at policy submission stage, but here
                     // is a late check just in case for the general case.
+                    // TODO: Change such that the function only takes a PolicySet that holds up this invariant.
                     if residual_could_error(residual) {
                         return Err(EarlyEvaluationError::PolicyCouldError);
                     }
@@ -301,14 +302,13 @@ impl Residuals<'_> {
 }
 
 pub(super) fn tpe<'a>(
-    policies: &PolicySet,
+    policies: &ast::PolicySet,
     request: &'a PartialRequest,
     entities: &'a PartialEntities,
     schema: &'a ValidatorSchema,
 ) -> Result<Residuals<'a>, TPEError> {
     use cedar_policy_core::tpe::tpe_policies;
-    let ps = policies.as_ref();
-    let res = tpe_policies(ps, request, entities, schema)?;
+    let res = tpe_policies(policies, request, entities, schema)?;
     // PANIC SAFETY: `res` should have the same policy ids with `ps`
     #[allow(clippy::unwrap_used)]
     Ok(Residuals {
@@ -318,7 +318,7 @@ pub(super) fn tpe<'a>(
             .map(|(id, r)| (id, Arc::new(r)))
             .collect(),
         ps: PolicySet::from_policies(res.into_iter().map(|(id, r)| {
-            let p = ps.get(&id).unwrap();
+            let p = policies.get(&id).unwrap();
             r.to_policy(id, p.effect(), p.annotations_arc().as_ref().clone())
                 .into()
         }))

@@ -34,7 +34,7 @@ namespace k8s {
     "path": __cedar::String
   };
 
-  entity Resource in [k8s::Namespace] = {
+  entity Resource = {
     "apiGroup": __cedar::String,
     // "apiVersion": __cedar::String,
     "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
@@ -74,7 +74,7 @@ namespace k8s {
 }
 
 namespace core {
-  entity pods in [k8s::Namespace] = {
+  entity pods = {
     "apiGroup": __cedar::String,          // always ""
     // "apiVersion": __cedar::String,        // always "v1"
     "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
@@ -101,7 +101,7 @@ namespace core {
     // lots of fields
   };
 
-  entity pods_status in [k8s::Namespace] = {
+  entity pods_status = {
     "apiGroup": __cedar::String,          // always ""
     // "apiVersion": __cedar::String,        // always "v1"
     "name": __cedar::String,
@@ -110,7 +110,7 @@ namespace core {
     "resourceCombined": __cedar::String,  // always "pods/status"
     "stored"?: core::VersionedPodStatus
   };
-  type VersionedPodStatus = {
+  entity VersionedPodStatus = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
     "v1": core::V1PodStatus
@@ -118,6 +118,11 @@ namespace core {
 }
 
 namespace meta {
+
+  entity UnknownString = {
+    "value": __cedar::String,
+  };
+
   entity StringToStringMap = {
     "keys": Set<__cedar::String>
   } tags __cedar::String;

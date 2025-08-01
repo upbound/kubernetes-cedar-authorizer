@@ -1,3 +1,4 @@
+mod ast;
 mod authorizer;
 mod entitybuilder;
 mod err;

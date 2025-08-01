@@ -24,6 +24,26 @@ impl EntityBuilder {
         }
     }
 
+    pub(super) fn unknown_string(optional_value: Option<String>) -> BuiltEntity {
+        match optional_value {
+            Some(value) => {
+                EntityBuilder::new()
+                    .with_attr("value", Some(value))
+                    .build(EntityType::EntityType(
+                        "meta::UnknownString".parse().unwrap(),
+                    ))
+            }
+            None => BuiltEntity {
+                uid: EntityUID::from_components(
+                    "meta::UnknownString".parse().unwrap(),
+                    Eid::new(Uuid::new_v4().to_smolstr()),
+                    None,
+                ),
+                entities: HashMap::new(),
+            },
+        }
+    }
+
     #[must_use]
     pub(super) fn with_eid(mut self, eid: impl Into<SmolStr>) -> Self {
         self.entity_eid = Some(Eid::new(eid));
@@ -36,6 +56,7 @@ impl EntityBuilder {
         self
     }
 
+    // TODO: De-duplicate these with the RecordBuilder methods, e.g. through a trait.
     #[must_use]
     pub(super) fn with_attr<K: Into<SmolStr>, V: Into<Value>>(
         mut self,

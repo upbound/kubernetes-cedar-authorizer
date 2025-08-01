@@ -1,7 +1,7 @@
 use k8s_openapi::api::core::v1 as corev1;
 use kube;
 use kube::runtime::reflector;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 use cedar_policy::PolicySet;
@@ -28,12 +28,13 @@ use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
+use super::ast::{rewrite_expr, rewrite_schema};
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder};
 use super::err::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
 struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
-    policies: PolicySet,
+    policies: ast::PolicySet,
     schema: Fragment<RawName>,
     schema_validator: ValidatorSchema,
     namespaces: S,
@@ -48,12 +49,40 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
 {
     pub fn new(
         ps: PolicySet,
-        schema: Fragment<RawName>,
+        mut schema: Fragment<RawName>,
         namespaces: S,
         discovery: D,
     ) -> Result<Self, SchemaError> {
+        let substitutions = HashSet::from([
+            "apiGroup".to_string(),
+            "resourceCombined".to_string(),
+            "name".to_string(),
+        ]);
+        let substituted_policies = ast::PolicySet::try_from_iter(ps.policies().map(|p| {
+            ast::Policy::from_when_clause(
+                p.effect(),
+                rewrite_expr(&p.as_ref().condition(), &substitutions),
+                p.as_ref().id().clone(),
+                p.as_ref().loc().cloned(),
+            )
+        }))?;
+
+        let substitutions = HashMap::from([
+            (
+                "apiGroup".to_string(),
+                "meta::UnknownString".parse().unwrap(),
+            ),
+            (
+                "resourceCombined".to_string(),
+                "meta::UnknownString".parse().unwrap(),
+            ),
+            ("name".to_string(), "meta::UnknownString".parse().unwrap()),
+        ]);
+
+        rewrite_schema(&mut schema, &substitutions)?;
+
         Ok(Self {
-            policies: ps,
+            policies: substituted_policies,
             schema: schema.clone(),
             // k8s_ns: schema.0.get(&K8S_NS).ok_or(SchemaError::NoKubernetesNamespace)?,
             schema_validator: schema.try_into()?,
@@ -62,7 +91,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             _phantom: PhantomData,
         })
     }
-    fn register_schema(&mut self, schema: Fragment<RawName>) -> Result<(), SchemaError> {
+    /*fn register_schema(&mut self, schema: Fragment<RawName>) -> Result<(), SchemaError> {
         self.schema = schema.clone();
         // self.k8s_ns = self.schema.0.get(&K8S_NS).ok_or(SchemaError::NoKubernetesNamespace)?;
         self.schema_validator = schema.try_into()?;
@@ -76,7 +105,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         // - k8s::Resource: apiGroup, resourceCombined, name. (namespace is already an entity reference.)
         self.policies = policies;
         Ok(())
-    }
+    }*/
 
     fn construct_principal(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
         // If the principal is any, it must match any user and use partial evaluation.
@@ -155,19 +184,40 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())))
     }
 
-    fn construct_untyped_resource(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
+    fn construct_untyped_resource(
+        &self,
+        attrs: &Attributes,
+    ) -> Result<BuiltEntity, AuthorizerError> {
         match &attrs.resource_attrs {
             None => Ok(EntityBuilder::new()
                 .with_attr("path", Some(attrs.path.clone().unwrap_or_default()))
                 .build(EntityType::EntityType(RESOURCE_NONRESOURCEURL.name.name()))),
             Some(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()
-                    // TODO: This is wrong; should use match and rewrite the schema
-                    .with_attr("apiGroup", Some(resource_attrs.api_group.to_string()))
-                    .with_attr("name", Some(resource_attrs.name.to_string()))
-                    .with_attr(
+                    .with_entity_attr(
+                        "apiGroup",
+                        Some(EntityBuilder::unknown_string(
+                            match resource_attrs.api_group {
+                                StarWildcardStringSelector::Any => None,
+                                _ => Some(resource_attrs.api_group.to_string()),
+                            },
+                        )),
+                    )
+                    .with_entity_attr(
+                        "name",
+                        Some(EntityBuilder::unknown_string(match resource_attrs.name {
+                            EmptyWildcardStringSelector::Any => None,
+                            _ => Some(resource_attrs.name.to_string()),
+                        })),
+                    )
+                    .with_entity_attr(
                         "resourceCombined",
-                        Some(resource_attrs.resource.to_string()),
+                        Some(EntityBuilder::unknown_string(
+                            match resource_attrs.resource {
+                                CombinedResource::Any => None,
+                                _ => Some(resource_attrs.resource.to_string()),
+                            },
+                        )),
                     );
 
                 resource_builder.add_entity_attr(
@@ -256,15 +306,24 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             &self.schema_validator,
         )?;
 
-        let untyped_resp = super::residuals::tpe(&self.policies, &untyped_req, &entities, &self.schema_validator)?;
+        let untyped_resp = super::residuals::tpe(
+            &self.policies,
+            &untyped_req,
+            &entities,
+            &self.schema_validator,
+        )?;
 
         Ok(match untyped_resp.is_authorized_new()?.decision() {
-            DetailedDecision::Allow(permitted_policy_ids) => DetailedDecision::Allow(permitted_policy_ids),
+            DetailedDecision::Allow(permitted_policy_ids) => {
+                DetailedDecision::Allow(permitted_policy_ids)
+            }
             // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
             // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
             // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
             DetailedDecision::Conditional(_) => DetailedDecision::NoOpinion,
-            DetailedDecision::Deny(forbidden_policy_ids) => DetailedDecision::Deny(forbidden_policy_ids),
+            DetailedDecision::Deny(forbidden_policy_ids) => {
+                DetailedDecision::Deny(forbidden_policy_ids)
+            }
             DetailedDecision::NoOpinion => DetailedDecision::NoOpinion,
         })
     }
@@ -337,9 +396,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
             // TODO: Maybe we want still to fold here too?
             _ => {
                 let action_str = attrs.verb.to_string();
-                match self
-                    .is_authorized_for_action(attrs, &action_str)?
-                {
+                match self.is_authorized_for_action(attrs, &action_str)? {
                     // TODO: Propagate errors
                     DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
                         .with_reason(Reason::allowed_by_policies(
@@ -381,8 +438,8 @@ mod test {
         use k8s_openapi::api::core::v1 as corev1;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
-        use std::str::FromStr;
         use std::collections::BTreeMap;
+        use std::str::FromStr;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
         let (schema, _) = Fragment::from_cedarschema_str(
@@ -531,6 +588,24 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
+            ("user should not be able to get resource foo across all API groups when resource.apiGroup='*'",
+            AttributesBuilder::new("explicitwildcardshouldfail", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "foo".to_string() },
+                    // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
+                    EmptyWildcardStringSelector::Exact("foo".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
+            ("user should be able to get resource foo across all API groups when resource.apiGroup is omitted",
+            AttributesBuilder::new("omittedconditionok", Verb::Get)
+                .with_resource(
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "foo".to_string() },
+                    // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
+                    EmptyWildcardStringSelector::Exact("foo".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::allow()),
         ];
 
         for (description, attrs, expected_resp) in test_cases {
