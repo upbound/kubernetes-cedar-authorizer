@@ -25,22 +25,14 @@ impl EntityBuilder {
     }
 
     pub(super) fn unknown_string(optional_value: Option<String>) -> BuiltEntity {
+        let entity_type = EntityType::EntityType("meta::UnknownString".parse().unwrap());
         match optional_value {
             Some(value) => {
                 EntityBuilder::new()
                     .with_attr("value", Some(value))
-                    .build(EntityType::EntityType(
-                        "meta::UnknownString".parse().unwrap(),
-                    ))
+                    .build(entity_type)
             }
-            None => BuiltEntity {
-                uid: EntityUID::from_components(
-                    "meta::UnknownString".parse().unwrap(),
-                    Eid::new(Uuid::new_v4().to_smolstr()),
-                    None,
-                ),
-                entities: HashMap::new(),
-            },
+            None => Self::build_unknown(entity_type),
         }
     }
 
@@ -163,6 +155,13 @@ impl EntityBuilder {
         record: Option<RecordBuilder>,
     ) {
         self.record_builder.add_record_attr(key, record);
+    }
+
+    pub(super) fn build_unknown(entity_type: EntityType) -> BuiltEntity {
+        BuiltEntity {
+            uid: EntityUID::from_components(entity_type, Eid::new(Uuid::new_v4().to_smolstr()), None),
+            entities: HashMap::new(),
+        }
     }
 
     pub(super) fn build(mut self, entity_type: EntityType) -> BuiltEntity {

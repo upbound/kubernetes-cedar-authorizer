@@ -227,10 +227,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
                         // If apiGroup & resource are known, we know whether the resource is cluster-scoped or namespace-scoped.
                         // If both or either are unknown, we must (for safety) assume that cluster-wide, i.e. "any".
                         EmptyWildcardStringSelector::Any => {
-                            let any_namespace_fallback = Some(
-                                EntityBuilder::new()
-                                    .build(EntityType::EntityType(ENTITY_NAMESPACE.name.name())),
-                            );
+                            let any_namespace_fallback = Some(EntityBuilder::build_unknown(EntityType::EntityType(ENTITY_NAMESPACE.name.name())));
 
                             match (&resource_attrs.api_group, &resource_attrs.resource) {
                                 (
@@ -241,6 +238,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
                                     StarWildcardStringSelector::Exact(api_group),
                                     CombinedResource::ResourceSubresource { resource, .. },
                                 ) => {
+                                    // TODO: What if we are backed by multiple clusters that can have varying discovery info?
                                     match self.discovery.get_api_group(api_group.as_str()) {
                                         Some(api_group) => {
                                             let resources = api_group.recommended_resources();
