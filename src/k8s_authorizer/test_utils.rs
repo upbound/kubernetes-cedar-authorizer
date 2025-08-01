@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
+use crate::k8s_authorizer::Selector;
+
 use super::{
     Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes,
     StarWildcardStringSelector, UserInfo, Verb,
@@ -43,12 +45,25 @@ impl AttributesBuilder {
         namespace: EmptyWildcardStringSelector,
         name: EmptyWildcardStringSelector,
     ) -> Self {
+        self.with_resource_and_selectors(api_group, resource, namespace, name, None, None)
+    }
+    pub fn with_resource_and_selectors(
+        mut self,
+        api_group: StarWildcardStringSelector,
+        resource: CombinedResource,
+        namespace: EmptyWildcardStringSelector,
+        name: EmptyWildcardStringSelector,
+        label_selector: Option<Vec<Selector>>,
+        field_selector: Option<Vec<Selector>>,
+    ) -> Self {
         match self.attrs.resource_attrs {
             Some(ref mut resource_attrs) => {
                 resource_attrs.namespace = namespace;
                 resource_attrs.resource = resource;
                 resource_attrs.name = name;
                 resource_attrs.api_group = api_group;
+                resource_attrs.label_selector = label_selector;
+                resource_attrs.field_selector = field_selector;
             }
             None => {
                 self.attrs.resource_attrs = Some(ResourceAttributes {
@@ -56,8 +71,8 @@ impl AttributesBuilder {
                     resource,
                     name,
                     api_group,
-                    field_selector: None,
-                    label_selector: None,
+                    field_selector,
+                    label_selector,
                 });
             }
         }

@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::k8s_authorizer::{EmptyWildcardStringSelector};
+
 use super::err::ParseError;
 use cedar_policy::PolicySet;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;
@@ -12,12 +14,12 @@ use cedar_policy_core::ast;
 pub trait KubernetesAuthorizer {
     /// Determines whether the request is authorized.
     /// Returns a Response object with the decision, reason, and errors, or an unexpected error.
-    fn is_authorized(&self, attrs: &Attributes) -> Result<Response, AuthorizerError>;
+    fn is_authorized(&self, attrs: Attributes) -> Result<Response, AuthorizerError>;
 
     /// Convenience method that converts the Result<Response, AuthorizerError> into a Response.
     /// If the Result is an unexpected error, NoOpinion is returned, and the errors are added to the Response.
     /// If the Result is ok, the Response is returned as is.
-    fn is_authorized_response(&self, attrs: &Attributes) -> Response {
+    fn is_authorized_response(&self, attrs: Attributes) -> Response {
         self.is_authorized(attrs).into()
     }
 }
@@ -159,7 +161,6 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                     user,
                     verb: verb.clone(),
                     path: None,
-
                     resource_attrs: Some(ResourceAttributes {
                         namespace: resource_attrs.namespace.unwrap_or_default().parse()?,
                         resource: resource_attrs.resource.unwrap_or_default().parse()?,

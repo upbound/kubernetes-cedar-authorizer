@@ -20,6 +20,8 @@ pub enum AuthorizerError {
 
     #[error(transparent)]
     PolicySetError(#[from] cedar_policy::PolicySetError),
+    #[error(transparent)]
+    AuthorizerParseError(#[from] ParseError),
 }
 
 // pub type Result<T> = std::result::Result<T, AuthorizerError>;

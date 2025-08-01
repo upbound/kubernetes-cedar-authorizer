@@ -69,3 +69,10 @@ permit (
     resource is k8s::Resource
 )
 when { principal.username == "omittedconditionok" && resource.resourceCombined == "foo" };
+
+permit (
+    principal is k8s::User,
+    action == k8s::Action::"watch",
+    resource is k8s::Resource
+)
+when { principal.username == "singleitemwatch" && resource has namespace &&resource.namespace.name == "foo" && resource.name == "bar" };

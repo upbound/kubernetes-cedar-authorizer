@@ -17,8 +17,8 @@ use crate::cedar_authorizer::residuals::{DetailedDecision, PartialResponseNew};
 use crate::k8s_authorizer::CombinedResource;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
-    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
-    Response, Verb,
+    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError, Reason,
+    Response, Verb, ResourceAttributes,
 };
 use crate::schema::core::{
     ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
@@ -325,12 +325,14 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             DetailedDecision::NoOpinion => DetailedDecision::NoOpinion,
         })
     }
+
+    
 }
 
 impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
     for CedarKubeAuthorizer<S, G, D>
 {
-    fn is_authorized(&self, attrs: &Attributes) -> Result<Response, AuthorizerError> {
+    fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
         // If * => check with every action in schema in subroutine
 
@@ -345,6 +347,11 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
             return Err(AuthorizerError::UnsupportedVerb(verb_str));
         }
 
+        // Populate the resource attributes from the field selectors, if present.
+        if let Some(resource_attrs) = &mut attrs.resource_attrs {
+            default_from_selectors(resource_attrs)?;
+        }
+
         match attrs.verb {
             Verb::Any => {
                 let errors = Vec::new();
@@ -353,7 +360,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
                 for (action, _) in k8s_ns.actions.iter() {
                     println!("action: {action}");
 
-                    let resp = self.is_authorized_for_action(attrs, action.as_str())?;
+                    let resp = self.is_authorized_for_action(&attrs, action.as_str())?;
                     // TODO: Propagate errors?
 
                     match resp {
@@ -394,7 +401,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
             // TODO: Maybe we want still to fold here too?
             _ => {
                 let action_str = attrs.verb.to_string();
-                match self.is_authorized_for_action(attrs, &action_str)? {
+                match self.is_authorized_for_action(&attrs, &action_str)? {
                     // TODO: Propagate errors
                     DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
                         .with_reason(Reason::allowed_by_policies(
@@ -419,6 +426,57 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
     }
 }
 
+// TODO: Should we validate to only allow only field selectors for specific verbs?
+fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Result<(), ParseError> {
+    if let Some(field_selectors) = &built_resource_attrs.field_selector {
+        for field_selector in field_selectors {
+            match field_selector.key.as_str() {
+                // Populate the name field from the field selector, if present, like Kubernetes does.
+                "metadata.name" => {
+                    match (&built_resource_attrs.name, field_selector.exact_match()) {
+                        // Fold the field selector value into the spec requirement, just like Kubernetes RequestInfo code does.
+                        (EmptyWildcardStringSelector::Any, Some(fieldselector_name)) => {
+                            built_resource_attrs.name = EmptyWildcardStringSelector::Exact(fieldselector_name);
+                        }
+                        // No requirements, nothing to do.
+                        (EmptyWildcardStringSelector::Any, None) => (),
+                        // If name is specified both in the SAR spec and in the field selector, they must match.
+                        (EmptyWildcardStringSelector::Exact(spec_name), Some(fieldselector_name)) => {
+                            if spec_name.as_str() != fieldselector_name {
+                                return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.name is specified both on the SubjectAccessReview spec ({spec_name}) and in the field selector ({fieldselector_name}), they must match")));
+                            }
+                        }
+                        // This is the usual case, name is specified in the SAR spec, but no field selector is present.
+                        (EmptyWildcardStringSelector::Exact(_), None) => (),
+                    }
+                },
+                // Populate the namespace field from the field selector in the similar manner, however, UNLIKE Kubernetes.
+                // We here choose to be consistent with the way we populate the name field, and not Kubernetes.
+                "metadata.namespace"  => {
+                    match (&built_resource_attrs.namespace, field_selector.exact_match()) {
+                        // Fold the field selector value into the spec requirement.
+                        (EmptyWildcardStringSelector::Any, Some(fieldselector_namespace)) => {
+                            built_resource_attrs.namespace = EmptyWildcardStringSelector::Exact(fieldselector_namespace);
+                        }
+                        // No requirements, nothing to do.
+                        (EmptyWildcardStringSelector::Any, None) => (),
+                        // If namespace is specified both in the SAR spec and in the field selector, they must match.
+                        (EmptyWildcardStringSelector::Exact(spec_namespace), Some(fieldselector_namespace)) => {
+                            if spec_namespace.as_str() != fieldselector_namespace {
+                                return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.namespace is specified both on the SubjectAccessReview spec ({spec_namespace}) and in the field selector ({fieldselector_namespace}), they must match")));
+                            }
+                        }
+                        // This is the usual case, namespace is specified in the SAR spec, but no field selector is present.
+                        (EmptyWildcardStringSelector::Exact(_), None) => (),
+                    }
+                },
+                _ => (),
+            }
+        }
+    }
+    Ok(())
+}
+
 // TODO: Translate to connect verbs
 
 mod test {
@@ -438,6 +496,7 @@ mod test {
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
         use std::collections::BTreeMap;
         use std::str::FromStr;
+        use crate::k8s_authorizer::Selector;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
         let (schema, _) = Fragment::from_cedarschema_str(
@@ -528,6 +587,17 @@ mod test {
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
+            ("serviceaccount can get serviceaccounts in its own namespace, but through a field selector",
+            AttributesBuilder::new("system:serviceaccount:foo:bar", Verb::Get)
+                .with_resource_and_selectors(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    None,
+                    Some(vec![Selector::in_values("metadata.namespace", false, vec!["foo".to_string()])])
+                )
+                .build(), Response::allow()),
             ("serviceaccount can get serviceaccounts in its own namespace, but not in the supersecret namespace",
             AttributesBuilder::new("system:serviceaccount:supersecret:bar", Verb::Get)
                 .with_resource(
@@ -604,11 +674,39 @@ mod test {
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
+            ("singleitemwatch can watch pod bar in the foo namespace",
+            AttributesBuilder::new("singleitemwatch", Verb::Watch)
+                .with_resource_and_selectors(
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    None,
+                    Some(vec![
+                        Selector::in_values("metadata.namespace", false, vec!["foo".to_string()]),
+                        Selector::in_values("metadata.name", false, vec!["bar".to_string()]),
+                    ])
+                )
+                .build(), Response::allow()),
+                ("singleitemwatch cannot get pod bar in the foo namespace, as the authorization was only for the watch verb",
+                AttributesBuilder::new("singleitemwatch", Verb::Get)
+                    .with_resource_and_selectors(
+                        StarWildcardStringSelector::Exact("".to_string()),
+                        CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                        EmptyWildcardStringSelector::Any,
+                        EmptyWildcardStringSelector::Any,
+                        None,
+                        Some(vec![
+                            Selector::in_values("metadata.namespace", false, vec!["foo".to_string()]),
+                            Selector::in_values("metadata.name", false, vec!["bar".to_string()]),
+                        ])
+                    )
+                    .build(), Response::no_opinion()),
         ];
 
         for (description, attrs, expected_resp) in test_cases {
             println!("{description}");
-            let resp = authorizer.is_authorized_response(&attrs);
+            let resp = authorizer.is_authorized_response(attrs);
             assert_eq!(
                 expected_resp.decision, resp.decision,
                 "got {} with reason: {}, errors: {:?}",

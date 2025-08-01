@@ -14,6 +14,29 @@ pub struct Selector {
     pub op: SelectorPredicate,
 }
 
+impl Selector {
+    pub fn exact_match(&self) -> Option<String> {
+        match &self.op {
+            SelectorPredicate::In(values) => {
+                if values.len() == 1 {
+                    Some(values.iter().next().unwrap().clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn in_values(key: &str, nullable: bool, values: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            key: key.to_string(),
+            nullable,
+            op: SelectorPredicate::In(values.into_iter().collect()),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum SelectorPredicate {
     Exists,
