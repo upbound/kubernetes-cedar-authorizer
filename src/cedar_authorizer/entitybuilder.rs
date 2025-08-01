@@ -27,11 +27,9 @@ impl EntityBuilder {
     pub(super) fn unknown_string(optional_value: Option<String>) -> BuiltEntity {
         let entity_type = EntityType::EntityType("meta::UnknownString".parse().unwrap());
         match optional_value {
-            Some(value) => {
-                EntityBuilder::new()
-                    .with_attr("value", Some(value))
-                    .build(entity_type)
-            }
+            Some(value) => EntityBuilder::new()
+                .with_attr("value", Some(value))
+                .build(entity_type),
             None => Self::build_unknown(entity_type),
         }
     }
@@ -159,7 +157,11 @@ impl EntityBuilder {
 
     pub(super) fn build_unknown(entity_type: EntityType) -> BuiltEntity {
         BuiltEntity {
-            uid: EntityUID::from_components(entity_type, Eid::new(Uuid::new_v4().to_smolstr()), None),
+            uid: EntityUID::from_components(
+                entity_type,
+                Eid::new(Uuid::new_v4().to_smolstr()),
+                None,
+            ),
             entities: HashMap::new(),
         }
     }

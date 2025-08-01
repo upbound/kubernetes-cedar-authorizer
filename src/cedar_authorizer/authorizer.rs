@@ -17,8 +17,8 @@ use crate::cedar_authorizer::residuals::{DetailedDecision, PartialResponseNew};
 use crate::k8s_authorizer::CombinedResource;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
-    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError, Reason,
-    Response, Verb, ResourceAttributes,
+    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
+    Reason, ResourceAttributes, Response, Verb,
 };
 use crate::schema::core::{
     ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
@@ -227,7 +227,9 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
                         // If apiGroup & resource are known, we know whether the resource is cluster-scoped or namespace-scoped.
                         // If both or either are unknown, we must (for safety) assume that cluster-wide, i.e. "any".
                         EmptyWildcardStringSelector::Any => {
-                            let any_namespace_fallback = Some(EntityBuilder::build_unknown(EntityType::EntityType(ENTITY_NAMESPACE.name.name())));
+                            let any_namespace_fallback = Some(EntityBuilder::build_unknown(
+                                EntityType::EntityType(ENTITY_NAMESPACE.name.name()),
+                            ));
 
                             match (&resource_attrs.api_group, &resource_attrs.resource) {
                                 (
@@ -325,8 +327,6 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             DetailedDecision::NoOpinion => DetailedDecision::NoOpinion,
         })
     }
-
-    
 }
 
 impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
@@ -436,12 +436,16 @@ fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Resu
                     match (&built_resource_attrs.name, field_selector.exact_match()) {
                         // Fold the field selector value into the spec requirement, just like Kubernetes RequestInfo code does.
                         (EmptyWildcardStringSelector::Any, Some(fieldselector_name)) => {
-                            built_resource_attrs.name = EmptyWildcardStringSelector::Exact(fieldselector_name);
+                            built_resource_attrs.name =
+                                EmptyWildcardStringSelector::Exact(fieldselector_name);
                         }
                         // No requirements, nothing to do.
                         (EmptyWildcardStringSelector::Any, None) => (),
                         // If name is specified both in the SAR spec and in the field selector, they must match.
-                        (EmptyWildcardStringSelector::Exact(spec_name), Some(fieldselector_name)) => {
+                        (
+                            EmptyWildcardStringSelector::Exact(spec_name),
+                            Some(fieldselector_name),
+                        ) => {
                             if spec_name.as_str() != fieldselector_name {
                                 return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.name is specified both on the SubjectAccessReview spec ({spec_name}) and in the field selector ({fieldselector_name}), they must match")));
                             }
@@ -449,19 +453,26 @@ fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Resu
                         // This is the usual case, name is specified in the SAR spec, but no field selector is present.
                         (EmptyWildcardStringSelector::Exact(_), None) => (),
                     }
-                },
+                }
                 // Populate the namespace field from the field selector in the similar manner, however, UNLIKE Kubernetes.
                 // We here choose to be consistent with the way we populate the name field, and not Kubernetes.
-                "metadata.namespace"  => {
-                    match (&built_resource_attrs.namespace, field_selector.exact_match()) {
+                "metadata.namespace" => {
+                    match (
+                        &built_resource_attrs.namespace,
+                        field_selector.exact_match(),
+                    ) {
                         // Fold the field selector value into the spec requirement.
                         (EmptyWildcardStringSelector::Any, Some(fieldselector_namespace)) => {
-                            built_resource_attrs.namespace = EmptyWildcardStringSelector::Exact(fieldselector_namespace);
+                            built_resource_attrs.namespace =
+                                EmptyWildcardStringSelector::Exact(fieldselector_namespace);
                         }
                         // No requirements, nothing to do.
                         (EmptyWildcardStringSelector::Any, None) => (),
                         // If namespace is specified both in the SAR spec and in the field selector, they must match.
-                        (EmptyWildcardStringSelector::Exact(spec_namespace), Some(fieldselector_namespace)) => {
+                        (
+                            EmptyWildcardStringSelector::Exact(spec_namespace),
+                            Some(fieldselector_namespace),
+                        ) => {
                             if spec_namespace.as_str() != fieldselector_namespace {
                                 return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.namespace is specified both on the SubjectAccessReview spec ({spec_namespace}) and in the field selector ({fieldselector_namespace}), they must match")));
                             }
@@ -469,7 +480,7 @@ fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Resu
                         // This is the usual case, namespace is specified in the SAR spec, but no field selector is present.
                         (EmptyWildcardStringSelector::Exact(_), None) => (),
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -484,6 +495,7 @@ mod test {
     fn test_is_authorized() {
         use super::super::kubestore::{TestKubeApiGroup, TestKubeDiscovery, TestKubeStore};
         use crate::k8s_authorizer::test_utils::AttributesBuilder;
+        use crate::k8s_authorizer::Selector;
         use crate::k8s_authorizer::{
             CombinedResource, EmptyWildcardStringSelector, KubernetesAuthorizer, Response,
             StarWildcardStringSelector, Verb,
@@ -496,7 +508,6 @@ mod test {
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
         use std::collections::BTreeMap;
         use std::str::FromStr;
-        use crate::k8s_authorizer::Selector;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
         let (schema, _) = Fragment::from_cedarschema_str(
