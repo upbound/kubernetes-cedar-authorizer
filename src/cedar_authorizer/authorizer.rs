@@ -13,7 +13,7 @@ use cedar_policy_core::ast::EntityType;
 use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
-use crate::cedar_authorizer::residuals::{DetailedDecision, PartialResponseNew};
+use crate::cedar_authorizer::residuals::DetailedDecision;
 use crate::k8s_authorizer::CombinedResource;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{

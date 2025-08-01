@@ -40,12 +40,9 @@
 */
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
-use std::ops::Deref;
-use std::sync::Arc;
 
 use cedar_policy_core::ast::ExprKind;
-use cedar_policy_core::ast::{self, Expr, InternalName, Name, UnreservedId, Var};
+use cedar_policy_core::ast::{Expr, InternalName, Name, UnreservedId, Var};
 use cedar_policy_core::expr_builder::ExprBuilder;
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
 use cedar_policy_core::validator::RawName;
@@ -116,8 +113,7 @@ pub(super) fn rewrite_schema(
             }
             _ => {
                 return Err(SchemaError::SchemaRewriteError(format!(
-                    "Resource type {} is not a standard entity record type as expected",
-                    resource_type.to_string()
+                    "Resource type {resource_type} is not a standard entity record type as expected"
                 )))
             }
         }
@@ -193,9 +189,9 @@ pub(super) fn rewrite_expr(expr: &Expr, substitutions: &HashSet<String>) -> Expr
         .unwrap(),
         ExprKind::Set(items) => Expr::set(items.iter().map(|e| rewrite_expr(e, substitutions))),
         ExprKind::UnaryApp { op, arg } => Expr::unary_app(*op, rewrite_expr(arg, substitutions)),
-        ExprKind::Var(var) => Expr::var(var.clone()),
+        ExprKind::Var(var) => Expr::var(*var),
         ExprKind::Lit(lit) => Expr::val(lit.clone()),
-        ExprKind::Slot(slot_id) => Expr::slot(slot_id.clone()),
+        ExprKind::Slot(slot_id) => Expr::slot(*slot_id),
         ExprKind::Unknown(unknown) => Expr::unknown(unknown.clone()),
     }
     .with_maybe_source_loc(expr.source_loc().cloned())
@@ -204,12 +200,13 @@ pub(super) fn rewrite_expr(expr: &Expr, substitutions: &HashSet<String>) -> Expr
 mod test {
     #[test]
     fn test_parse_policy() {
+        // Empirically test how the parser handles absence of parentheses.
         use cedar_policy::PolicySet;
-        let policy1: PolicySet = "permit(principal, action, resource) when { principal.a == resource.b && (resource.c == principal.d && resource.d == principal.e) };".parse().unwrap();
-        println!("{}", policy1.to_string());
+        let policy1: PolicySet = "permit(principal, action, resource) when { (principal.a == resource.b && resource.c == principal.d) && resource.d == principal.e };".parse().unwrap();
+        println!("{}", policy1);
         let json_policy1 = policy1.to_json().unwrap();
         let json_str = serde_json::to_string_pretty(&json_policy1).unwrap();
-        println!("{}", json_str);
+        println!("{json_str}");
 
         let policy2: PolicySet = "permit(principal, action, resource) when { principal.a == resource.b && resource.c == principal.d && resource.d == principal.e };".parse().unwrap();
         let json_policy2 = policy2.to_json().unwrap();
@@ -327,38 +324,9 @@ mod test {
         use cedar_policy_core::extensions::Extensions;
         use cedar_policy_core::validator::json_schema::Fragment;
         use std::collections::HashMap;
+        use std::io::Write;
         let (mut schema, _) = Fragment::from_cedarschema_str(
-            r#"
-namespace k8s {
-    action "create" appliesTo {
-        principal: [A],
-        resource: [A, core::B, core::C],
-        context: {}
-    };
-
-    entity A = {
-        "foo": __cedar::String,
-    };
-}
-
-namespace core {
-    entity B = {
-        "foo": __cedar::String,
-        "bar": __cedar::String,
-    };
-    entity C = {
-        "foo": __cedar::String,
-        "baz": __cedar::String,
-    };
-}
-
-namespace meta {
-    entity UnknownString = {
-        "value": __cedar::String,
-    };
-}
-
-            "#,
+            include_str!("testfiles/rewrite-schema/before.cedarschema"),
             Extensions::all_available(),
         )
         .unwrap();
@@ -367,7 +335,15 @@ namespace meta {
             ("bar".to_string(), "meta::UnknownString".parse().unwrap()),
         ]);
         rewrite_schema(&mut schema, &rewrite_resource_attr_to_entity).unwrap();
-        println!("{}", schema.to_cedarschema().unwrap());
-        assert!(false);
+        let got_schema_str = schema.to_cedarschema().unwrap();
+        println!("{got_schema_str}");
+        // assert test schema file is already formatted
+        if got_schema_str != include_str!("testfiles/rewrite-schema/after.cedarschema") {
+            let mut f = std::fs::File::create("src/cedar_authorizer/testfiles/rewrite-schema/after.cedarschema")
+                .expect("open file works");
+            f.write_all(got_schema_str.as_bytes())
+                .expect("write to work");
+            assert_eq!("actual", "expected")
+        }
     }
 }

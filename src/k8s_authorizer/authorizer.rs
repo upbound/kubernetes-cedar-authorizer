@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use crate::k8s_authorizer::EmptyWildcardStringSelector;
-
 use super::err::ParseError;
 use cedar_policy::PolicySet;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;

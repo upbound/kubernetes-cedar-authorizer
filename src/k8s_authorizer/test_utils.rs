@@ -39,7 +39,7 @@ impl AttributesBuilder {
     }
 
     pub fn with_resource(
-        mut self,
+        self,
         api_group: StarWildcardStringSelector,
         resource: CombinedResource,
         namespace: EmptyWildcardStringSelector,

@@ -8,7 +8,7 @@ namespace k8s {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
     "name": __cedar::String,
-    "uid": __cedar::String,
+    "uid"?: __cedar::String,
     "username": __cedar::String
   };
 
@@ -16,9 +16,8 @@ namespace k8s {
     "path": __cedar::String
   };
 
-  entity Resource in [k8s::Namespace] = {
+  entity Resource = {
     "apiGroup": __cedar::String,
-    "apiVersion": __cedar::String,
     "name": __cedar::String,
     "namespace"?: k8s::Namespace,
     "resourceCombined": __cedar::String
@@ -29,97 +28,99 @@ namespace k8s {
     "groups": Set<__cedar::String>,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
-    "uid": __cedar::String,
+    "uid"?: __cedar::String,
     "username": __cedar::String
   };
+
+  entity UnauthenticatedUser;
 
   entity User = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
-    "uid": __cedar::String,
+    "uid"?: __cedar::String,
     "username": __cedar::String
   };
 
-  action "any" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource, k8s::NonResourceURL],
     context: {}
   };
 
-  action "connect" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "connect" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
 
-  action "create" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "create" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
 
-  action "delete" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "delete" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource, k8s::NonResourceURL],
     context: {}
   };
 
-  action "deletecollection" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "deletecollection" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
 
-  action "get" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "get" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource, k8s::NonResourceURL],
     context: {}
   };
 
-  action "head" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "head" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::NonResourceURL],
     context: {}
   };
 
-  action "list" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "list" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
 
-  action "options" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "options" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::NonResourceURL],
     context: {}
   };
 
-  action "patch" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "patch" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource, k8s::NonResourceURL],
     context: {}
   };
 
-  action "post" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "post" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::NonResourceURL],
     context: {}
   };
 
-  action "put" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "put" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::NonResourceURL],
     context: {}
   };
 
-  action "update" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "update" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
 
-  action "watch" in [k8s::Action::"any"] appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node],
+  action "watch" in [k8s::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
     resource: [k8s::Resource],
     context: {}
   };
@@ -134,7 +135,7 @@ namespace meta {
     "generateName"?: __cedar::String,
     "labels": meta::StringToStringMap,
     "resourceVersion": __cedar::String,
-    "uid": __cedar::String
+    "uid"?: __cedar::String
   };
 
   entity StringToStringMap = {
