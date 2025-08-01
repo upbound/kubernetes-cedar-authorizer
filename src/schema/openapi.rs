@@ -1,8 +1,9 @@
 use cedar_policy_core::validator::json_schema::*;
 use cedar_policy_core::validator::RawName;
 
+use super::core::TYPE_OBJECTMETA;
 use super::discovery::CedarGroupVersion;
-use super::types::CedarTypeName;
+use super::types::{CedarTypeName, TypeWrapper};
 
 use serde_json::Value;
 

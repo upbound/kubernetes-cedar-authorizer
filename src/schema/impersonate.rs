@@ -12,6 +12,8 @@ use super::types::{ActionUID, CedarTypeName, EntityWrapper, TypeKind, TypeWrappe
 use std::ops::Deref;
 use std::str::FromStr;
 
+// TODO: Make this actually use k8s::User, k8s::ServiceAccount, k8s::Node, etc. as resource types.
+
 static AUTHENTICATION_K8S_IO_NS: LazyLock<Option<Name>> =
     LazyLock::new(|| Some(Name::from_str("io::k8s::authentication").unwrap()));
 

@@ -157,7 +157,7 @@ pub fn with_kubernetes_groupversion(
             payload_versionlist_type_name.cedar_namespace.clone(),
         );
         let payload_versionlist_type = payload_versionlist_ns
-            .common_types
+            .common_types // TODO: Make this an entity type instead
             .entry(payload_versionlist_type_name.clone().try_into()?)
             .or_insert_with(|| CommonType {
                 ty: Type::Type {
@@ -167,6 +167,8 @@ pub fn with_kubernetes_groupversion(
                             ("kind".into(), TypeWrapper::String.required()),
                             (
                                 // TODO: Metadata should probably not be set using status subresource. Check what is given in admission in the stored object; the full object or not?
+                                // Only add metadata if it really exists on the top-level object, although it exists for pretty much all objects.
+                                // TODO: How much information is available in admission for status subresource requests?
                                 "metadata".into(),
                                 TypeWrapper::CommonRef(TYPE_OBJECTMETA.name.full_name()).required(),
                             ),
@@ -183,13 +185,12 @@ pub fn with_kubernetes_groupversion(
         // Add both versions to the schema
         if let Type::Type { ty, .. } = &mut payload_versionlist_type.ty {
             if let TypeVariant::Record(record) = ty {
-                // TODO: Can we keep this required here?
                 record.attributes.insert(
                     payload_gv.version.as_str().into(),
                     TypeWrapper::CommonRef(
                         versioned_payload_openapi_type.cedar_type_name.full_name(),
                     )
-                    .required(),
+                    .optional(),
                 );
             }
         }

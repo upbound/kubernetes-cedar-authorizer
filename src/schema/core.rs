@@ -208,7 +208,7 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
         ),
     ]),
     kind: TypeKind::EntityType {
-        members_of_types: Vec::from([&ENTITY_NAMESPACE.name]),
+        members_of_types: Vec::new(), // Add ancestors here later only when we know of a need.
         apply_to_actions_as_principal: Vec::new(),
         apply_to_actions_as_resource: Vec::from([
             Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
@@ -245,12 +245,14 @@ pub(crate) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>
 
 pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| {
+        // TODO: Add an optional "first" property for the values.
         make_stringmap_type((&TypeWrapper::Set(Box::new(TypeWrapper::String))).into()).unwrap()
     });
 
 pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
     name: CedarTypeName::new(META_NS.clone(), "V1ObjectMeta").unwrap(),
     attrs: BTreeMap::from([
+        // TODO: Change these to be simpler with the bare minimal things needed.
         // Required strings
         ("uid".into(), TypeWrapper::String.optional()),
         ("creationTimestamp".into(), TypeWrapper::String.required()), // TODO: timestamp
