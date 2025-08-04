@@ -30,10 +30,6 @@ namespace k8s {
     "name": __cedar::String
   };
 
-  entity NonResourceURL = {
-    "path": __cedar::String
-  };
-
   entity Resource = {
     "apiGroup": __cedar::String,
     // "apiVersion": __cedar::String,
@@ -44,7 +40,7 @@ namespace k8s {
 
   action "*" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
+    resource: [k8s::Resource, core::pods, core::pods_status],
     context: {}
   };
 
@@ -56,7 +52,7 @@ namespace k8s {
 
   action "get" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, k8s::NonResourceURL],
+    resource: [k8s::Resource, core::pods, core::pods_status],
     context: {}
   };
 
@@ -69,6 +65,25 @@ namespace k8s {
   action "watch" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status],
+    context: {}
+  };
+}
+
+namespace k8s::nonresource {
+
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "get" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::nonresource::NonResourceURL],
     context: {}
   };
 }

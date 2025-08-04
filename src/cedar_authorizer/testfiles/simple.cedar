@@ -1,7 +1,7 @@
 permit (
     principal is k8s::User,
     action,
-    resource is k8s::Resource
+    resource
 )
 // Even though the have this weird residual in the beginning (whenever namespace=*), the principals should be allowed to perform */*
 when { ["admin", "superadmin"].contains(principal.username) };
@@ -22,15 +22,24 @@ when
 
 permit (
     principal,
-    action == k8s::Action::"get",
-    resource is k8s::NonResourceURL
+    action == k8s::nonresource::Action::"get",
+    resource
 )
-when { resource.path == "/version" };
+when { resource.path like "/openapi/*" };
+
+// This is expected to not have any effect, as it wrongly puts a condition for the path being "*", which even though it's
+// string representation is that in the SAR, requires an absence of condition to be allowed here.
+permit (
+    principal is k8s::UnauthenticatedUser,
+    action == k8s::nonresource::Action::"get",
+    resource
+)
+when { resource.path == "*" };
 
 permit (
     principal is k8s::ServiceAccount,
     action in [k8s::Action::"get", k8s::Action::"list"],
-    resource is k8s::Resource
+    resource
 )
 when
 {
@@ -45,34 +54,34 @@ when
 permit (
     principal is k8s::Node,
     action in [k8s::Action::"get", k8s::Action::"list", k8s::Action::"watch"],
-    resource is k8s::Resource
+    resource
 )
 when { resource.apiGroup == "" && resource.resourceCombined == "nodes" && resource.name == principal.name };
 
 permit (
     principal is k8s::User,
     action,
-    resource is k8s::Resource
+    resource
 )
 when { principal.groups.contains("lucas") && resource has namespace && resource.namespace.name == "foo" };
 
 permit (
     principal is k8s::User,
     action == k8s::Action::"get",
-    resource is k8s::Resource
+    resource
 )
 when { principal.username == "explicitwildcardshouldfail" && resource.apiGroup == "*" && resource.resourceCombined == "foo" };
 
 permit (
     principal is k8s::User,
     action == k8s::Action::"get",
-    resource is k8s::Resource
+    resource
 )
 when { principal.username == "omittedconditionok" && resource.resourceCombined == "foo" };
 
 permit (
     principal is k8s::User,
     action == k8s::Action::"watch",
-    resource is k8s::Resource
+    resource
 )
 when { principal.username == "singleitemwatch" && resource has namespace &&resource.namespace.name == "foo" && resource.name == "bar" };

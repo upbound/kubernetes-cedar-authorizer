@@ -2098,10 +2098,6 @@ namespace k8s {
     "username": __cedar::String
   };
 
-  entity NonResourceURL = {
-    "path": __cedar::String
-  };
-
   entity Resource = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
@@ -2129,7 +2125,7 @@ namespace k8s {
 
   action "*" appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL],
+    resource: [k8s::Resource],
     context: {}
   };
 
@@ -2165,7 +2161,7 @@ namespace k8s {
 
   action "delete" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::nodes_proxy, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::pods_proxy, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services, core::services_proxy],
+    resource: [k8s::Resource, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::nodes, core::nodes_proxy, core::persistentvolumeclaims, core::persistentvolumes, core::pods, core::pods_proxy, core::podtemplates, core::replicationcontrollers, core::resourcequotas, core::secrets, core::serviceaccounts, core::services, core::services_proxy],
     context: {}
   };
 
@@ -2183,13 +2179,7 @@ namespace k8s {
 
   action "get" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL, core::componentstatuses, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_attach, core::pods_ephemeralcontainers, core::pods_exec, core::pods_log, core::pods_portforward, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
-    context: {}
-  };
-
-  action "head" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
+    resource: [k8s::Resource, core::componentstatuses, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_attach, core::pods_ephemeralcontainers, core::pods_exec, core::pods_log, core::pods_portforward, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
     context: {}
   };
 
@@ -2205,27 +2195,9 @@ namespace k8s {
     context: {}
   };
 
-  action "options" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
-    context: {}
-  };
-
   action "patch" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_ephemeralcontainers, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
-    context: {}
-  };
-
-  action "post" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
-    context: {}
-  };
-
-  action "put" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
+    resource: [k8s::Resource, core::configmaps, core::endpoints, core::events, core::limitranges, core::namespaces, core::namespaces_status, core::nodes, core::nodes_proxy, core::nodes_status, core::persistentvolumeclaims, core::persistentvolumeclaims_status, core::persistentvolumes, core::persistentvolumes_status, core::pods, core::pods_ephemeralcontainers, core::pods_proxy, core::pods_resize, core::pods_status, core::podtemplates, core::replicationcontrollers, core::replicationcontrollers_scale, core::replicationcontrollers_status, core::resourcequotas, core::resourcequotas_status, core::secrets, core::serviceaccounts, core::services, core::services_proxy, core::services_status],
     context: {}
   };
 
@@ -2397,6 +2369,60 @@ namespace meta {
   entity StringToV1QuantityMap = {
     "keys": Set<__cedar::String>
   } tags meta::V1Quantity;
+}
+
+namespace k8s::nonresource {
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "delete" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "get" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "head" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "options" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "patch" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "post" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "put" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
 }
 
 namespace policy {

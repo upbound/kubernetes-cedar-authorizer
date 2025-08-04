@@ -30,10 +30,6 @@ namespace k8s {
     "username": __cedar::String
   };
 
-  entity NonResourceURL = {
-    "path": __cedar::String
-  };
-
   entity Resource = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
@@ -61,7 +57,7 @@ namespace k8s {
 
   action "*" appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL],
+    resource: [k8s::Resource],
     context: {}
   };
 
@@ -97,7 +93,7 @@ namespace k8s {
 
   action "delete" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL],
+    resource: [k8s::Resource],
     context: {}
   };
 
@@ -115,13 +111,7 @@ namespace k8s {
 
   action "get" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL],
-    context: {}
-  };
-
-  action "head" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
+    resource: [k8s::Resource],
     context: {}
   };
 
@@ -137,27 +127,9 @@ namespace k8s {
     context: {}
   };
 
-  action "options" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
-    context: {}
-  };
-
   action "patch" in [k8s::Action::"*"] appliesTo {
     principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::Resource, k8s::NonResourceURL],
-    context: {}
-  };
-
-  action "post" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
-    context: {}
-  };
-
-  action "put" in [k8s::Action::"*"] appliesTo {
-    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
-    resource: [k8s::NonResourceURL],
+    resource: [k8s::Resource],
     context: {}
   };
 
@@ -205,4 +177,58 @@ namespace meta {
   entity StringToStringSetMap = {
     "keys": Set<__cedar::String>
   } tags Set<__cedar::String>;
+}
+
+namespace k8s::nonresource {
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "delete" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "get" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "head" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "options" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "patch" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "post" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "put" in [k8s::nonresource::Action::"*"] appliesTo {
+    principal: [k8s::User, k8s::UnauthenticatedUser, k8s::ServiceAccount, k8s::Node],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
 }

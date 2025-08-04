@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
+
 use super::err::ParseError;
 use cedar_policy::PolicySet;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;
@@ -158,8 +160,7 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                 Ok(Attributes {
                     user,
                     verb: verb.clone(),
-                    path: None,
-                    resource_attrs: Some(ResourceAttributes {
+                    request_type: RequestType::Resource(ResourceAttributes {
                         namespace: resource_attrs.namespace.unwrap_or_default().parse()?,
                         resource: resource_attrs.resource.unwrap_or_default().parse()?,
                         name: resource_attrs.name.unwrap_or_default().parse()?,
@@ -215,8 +216,10 @@ impl TryFrom<SubjectAccessReview> for Attributes {
             (None, Some(nonresource_attrs)) => Ok(Attributes {
                 user,
                 verb: nonresource_attrs.verb.unwrap_or_default().parse()?,
-                path: nonresource_attrs.path,
-                resource_attrs: None,
+                request_type: RequestType::NonResource(NonResourceAttributes {
+                    // If the path is not specified, we assume it means "any path".
+                    path: nonresource_attrs.path.map(|p| p.parse()).transpose()?.unwrap_or(StarWildcardStringSelector::Any),
+                }),
             }),
             (Some(_), Some(_)) => Err(ParseError::InvalidSubjectAccessReview(
                 "resource and non-resource attributes are mutually exclusive".to_string(),

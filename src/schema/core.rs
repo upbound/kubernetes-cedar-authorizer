@@ -15,23 +15,24 @@ use super::err::Result;
 
 pub static K8S_NS: LazyLock<Option<Name>> = LazyLock::new(|| Some(Name::from_str("k8s").unwrap()));
 
+pub static K8S_NONRESOURCE_NS: LazyLock<Option<Name>> =
+    LazyLock::new(|| Some(Name::from_str("k8s::nonresource").unwrap()));
+
 // TODO: Make it an error to try to use this manually, e.g. through k8s RBAC.
-pub(crate) static ACTION_ANY: LazyLock<ActionUID> =
+pub(crate) static RESOURCE_ACTION_ANY: LazyLock<ActionUID> =
     LazyLock::new(|| ActionUID(K8S_NS.clone(), "*".to_string()));
 
-// For both Resource- and Non-Resource Requests
-static ALL_RESOURCE_ACTIONS: LazyLock<[ActionUID; 4]> = LazyLock::new(|| {
+pub(crate) static NONRESOURCE_ACTION_ANY: LazyLock<ActionUID> =
+    LazyLock::new(|| ActionUID(K8S_NONRESOURCE_NS.clone(), "*".to_string()));
+
+// For resource-requests only
+static RESOURCE_ACTIONS: LazyLock<[ActionUID; 10]> = LazyLock::new(|| {
     [
-        ACTION_ANY.clone(),
+        RESOURCE_ACTION_ANY.clone(),
         ActionUID(K8S_NS.clone(), "get".to_string()), // HEAD -> get for resource requests
         ActionUID(K8S_NS.clone(), "patch".to_string()), // Not sure if this applies to non-resource requests
         ActionUID(K8S_NS.clone(), "delete".to_string()), // Not sure if this applies to non-resource requests
-    ]
-});
 
-// For resource-requests only
-static ONLY_RESOURCE_ACTIONS: LazyLock<[ActionUID; 6]> = LazyLock::new(|| {
-    [
         ActionUID(K8S_NS.clone(), "list".to_string()),
         ActionUID(K8S_NS.clone(), "watch".to_string()),
         // TIL: Creates can have name from the path already, for subresource requests.
@@ -50,12 +51,16 @@ static ONLY_RESOURCE_ACTIONS: LazyLock<[ActionUID; 6]> = LazyLock::new(|| {
 // so we can probably skip it.
 
 // For non-resource requests only
-static ONLY_NONRESOURCE_ACTIONS: LazyLock<[ActionUID; 4]> = LazyLock::new(|| {
+static NONRESOURCE_ACTIONS: LazyLock<[ActionUID; 8]> = LazyLock::new(|| {
     [
-        ActionUID(K8S_NS.clone(), "put".to_string()),
-        ActionUID(K8S_NS.clone(), "post".to_string()),
-        ActionUID(K8S_NS.clone(), "head".to_string()),
-        ActionUID(K8S_NS.clone(), "options".to_string()),
+        NONRESOURCE_ACTION_ANY.clone(),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "get".to_string()), // HEAD -> get for resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "patch".to_string()), // Not sure if this applies to non-resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "delete".to_string()), // Not sure if this applies to non-resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "put".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "post".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "head".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "options".to_string()),
     ]
 });
 
@@ -81,9 +86,8 @@ pub(crate) static PRINCIPAL_USER: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(), // No entity groups for now
         apply_to_actions_as_principal: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
         ])
         .concat(), // TODO: How to know all verbs at this point?
         apply_to_actions_as_resource: Vec::new(),
@@ -98,9 +102,8 @@ pub(crate) static PRINCIPAL_UNAUTHENTICATEDUSER: LazyLock<EntityWrapper> =
         kind: TypeKind::EntityType {
             members_of_types: Vec::new(), // No entity groups for now
             apply_to_actions_as_principal: Vec::from([
-                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
             ])
             .concat(), // TODO: How to know all verbs at this point?
             apply_to_actions_as_resource: Vec::new(),
@@ -133,9 +136,8 @@ pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
         kind: TypeKind::EntityType {
             members_of_types: Vec::from([&ENTITY_NAMESPACE.name]),
             apply_to_actions_as_principal: Vec::from([
-                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
             ])
             .concat(), // TODO: How to know all verbs at this point?
             apply_to_actions_as_resource: Vec::new(),
@@ -163,9 +165,8 @@ pub(crate) static PRINCIPAL_NODE: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(),
         apply_to_actions_as_principal: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
         ])
         .concat(), // TODO: How to know all verbs at this point?
         apply_to_actions_as_resource: Vec::new(),
@@ -211,8 +212,7 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
         members_of_types: Vec::new(), // Add ancestors here later only when we know of a need.
         apply_to_actions_as_principal: Vec::new(),
         apply_to_actions_as_resource: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
         ])
         .concat(),
         tags: None,
@@ -222,14 +222,13 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
 // ID is just a random UUID to avoid people depending on the Entity ID.
 pub(crate) static RESOURCE_NONRESOURCEURL: LazyLock<EntityWrapper> =
     LazyLock::new(|| EntityWrapper {
-        name: CedarTypeName::new(K8S_NS.clone(), "NonResourceURL").unwrap(),
+        name: CedarTypeName::new(K8S_NONRESOURCE_NS.clone(), "NonResourceURL").unwrap(),
         attrs: BTreeMap::from([("path".into(), TypeWrapper::String.required())]),
         kind: TypeKind::EntityType {
             members_of_types: Vec::new(),
             apply_to_actions_as_principal: Vec::new(),
             apply_to_actions_as_resource: Vec::from([
-                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
             ])
             .concat(),
             tags: None,
@@ -280,22 +279,27 @@ pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| En
 pub(crate) fn build_base() -> Result<Fragment<RawName>> {
     let mut f = Fragment(BTreeMap::new());
 
-    for a in ALL_RESOURCE_ACTIONS.iter() {
+    for a in RESOURCE_ACTIONS.iter() {
         a.apply(
             &mut f,
             None,
-            if a.1 == ACTION_ANY.1 {
+            if a.1 == RESOURCE_ACTION_ANY.1 {
                 None
             } else {
-                Some(Vec::from([ACTION_ANY.deref().into()]))
+                Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()]))
             },
         );
     }
-    for a in ONLY_RESOURCE_ACTIONS.iter() {
-        a.apply(&mut f, None, Some(Vec::from([ACTION_ANY.deref().into()])));
-    }
-    for a in ONLY_NONRESOURCE_ACTIONS.iter() {
-        a.apply(&mut f, None, Some(Vec::from([ACTION_ANY.deref().into()])));
+    for a in NONRESOURCE_ACTIONS.iter() {
+        a.apply(
+            &mut f,
+            None,
+            if a.1 == NONRESOURCE_ACTION_ANY.1 {
+                None
+            } else {
+                Some(Vec::from([NONRESOURCE_ACTION_ANY.deref().into()]))
+            },
+        );
     }
 
     PRINCIPAL_USER.apply(&mut f)?;

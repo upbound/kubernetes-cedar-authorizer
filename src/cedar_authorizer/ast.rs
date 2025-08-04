@@ -48,25 +48,25 @@ use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
 use cedar_policy_core::validator::RawName;
 
 use crate::cedar_authorizer::SchemaError;
-use crate::schema::core::K8S_NS;
 
 pub(super) fn rewrite_schema(
     schema: &mut Fragment<RawName>,
+    actions_ns_name: Option<Name>,
     rewrite_resource_attr_to_entity: &HashMap<String, RawName>,
 ) -> Result<(), SchemaError> {
-    let k8s_ns = schema
+    let actions_ns = schema
         .0
-        .get(&K8S_NS)
+        .get(&actions_ns_name)
         .ok_or(SchemaError::SchemaRewriteError(
-            "Namespace k8s not found in schema".to_string(),
+            format!("Namespace {} not found in schema", actions_ns_name.as_ref().map(|n| n.to_string()).unwrap_or_default()),
         ))?;
 
-    let resource_types: HashSet<InternalName> = k8s_ns
+    let resource_types: HashSet<InternalName> = actions_ns
         .actions
         .values()
         .flat_map(|action| action.applies_to.iter())
         .flat_map(|applies_to| applies_to.resource_types.iter())
-        .map(|resource_type| resource_type.clone().qualify_with_name(K8S_NS.as_ref()))
+        .map(|resource_type| resource_type.clone().qualify_with_name(actions_ns_name.as_ref()))
         .collect();
 
     for resource_type in resource_types {
@@ -325,6 +325,7 @@ mod test {
         use cedar_policy_core::validator::json_schema::Fragment;
         use std::collections::HashMap;
         use std::io::Write;
+        use crate::schema::core::K8S_NS;
         let (mut schema, _) = Fragment::from_cedarschema_str(
             include_str!("testfiles/rewrite-schema/before.cedarschema"),
             Extensions::all_available(),
@@ -334,13 +335,15 @@ mod test {
             ("foo".to_string(), "meta::UnknownString".parse().unwrap()),
             ("bar".to_string(), "meta::UnknownString".parse().unwrap()),
         ]);
-        rewrite_schema(&mut schema, &rewrite_resource_attr_to_entity).unwrap();
+        rewrite_schema(&mut schema, K8S_NS.clone(), &rewrite_resource_attr_to_entity).unwrap();
         let got_schema_str = schema.to_cedarschema().unwrap();
         println!("{got_schema_str}");
         // assert test schema file is already formatted
         if got_schema_str != include_str!("testfiles/rewrite-schema/after.cedarschema") {
-            let mut f = std::fs::File::create("src/cedar_authorizer/testfiles/rewrite-schema/after.cedarschema")
-                .expect("open file works");
+            let mut f = std::fs::File::create(
+                "src/cedar_authorizer/testfiles/rewrite-schema/after.cedarschema",
+            )
+            .expect("open file works");
             f.write_all(got_schema_str.as_bytes())
                 .expect("write to work");
             assert_eq!("actual", "expected")

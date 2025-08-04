@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::k8s_authorizer::Selector;
+use crate::k8s_authorizer::{NonResourceAttributes, RequestType, Selector};
 
 use super::{
     Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes,
@@ -12,7 +12,7 @@ pub struct AttributesBuilder {
 }
 
 impl AttributesBuilder {
-    pub fn new(username: &str, verb: Verb) -> Self {
+    pub fn nonresource(username: &str, verb: Verb, path: StarWildcardStringSelector) -> Self {
         Self {
             attrs: Attributes {
                 user: UserInfo {
@@ -22,15 +22,45 @@ impl AttributesBuilder {
                     extra: BTreeMap::new(),
                 },
                 verb,
-                path: None,
-                resource_attrs: None,
+                request_type: RequestType::NonResource(NonResourceAttributes {
+                    path,
+                }),
             },
         }
     }
 
-    pub fn with_path(mut self, path: &str) -> Self {
-        self.attrs.path = Some(path.to_string());
-        self
+    pub fn resource(username: &str, verb: Verb, api_group: StarWildcardStringSelector,
+        resource: CombinedResource,
+        namespace: EmptyWildcardStringSelector,
+        name: EmptyWildcardStringSelector,) -> Self {
+        Self::resource_and_selectors(username, verb, api_group, resource, namespace, name, None, None)
+    }
+
+    pub fn resource_and_selectors(username: &str, verb: Verb, api_group: StarWildcardStringSelector,
+        resource: CombinedResource,
+        namespace: EmptyWildcardStringSelector,
+        name: EmptyWildcardStringSelector,
+        label_selector: Option<Vec<Selector>>,
+        field_selector: Option<Vec<Selector>>,) -> Self {
+        Self {
+            attrs: Attributes {
+                user: UserInfo {
+                    name: username.to_string(),
+                    uid: None,
+                    groups: HashSet::new(),
+                    extra: BTreeMap::new(),
+                },
+                verb,
+                request_type: RequestType::Resource(ResourceAttributes {
+                    namespace,
+                    resource,
+                    name,
+                    api_group,
+                    field_selector,
+                    label_selector,
+                }),
+            },
+        }
     }
 
     pub fn with_group(mut self, group: &str) -> Self {
@@ -38,46 +68,6 @@ impl AttributesBuilder {
         self
     }
 
-    pub fn with_resource(
-        self,
-        api_group: StarWildcardStringSelector,
-        resource: CombinedResource,
-        namespace: EmptyWildcardStringSelector,
-        name: EmptyWildcardStringSelector,
-    ) -> Self {
-        self.with_resource_and_selectors(api_group, resource, namespace, name, None, None)
-    }
-    pub fn with_resource_and_selectors(
-        mut self,
-        api_group: StarWildcardStringSelector,
-        resource: CombinedResource,
-        namespace: EmptyWildcardStringSelector,
-        name: EmptyWildcardStringSelector,
-        label_selector: Option<Vec<Selector>>,
-        field_selector: Option<Vec<Selector>>,
-    ) -> Self {
-        match self.attrs.resource_attrs {
-            Some(ref mut resource_attrs) => {
-                resource_attrs.namespace = namespace;
-                resource_attrs.resource = resource;
-                resource_attrs.name = name;
-                resource_attrs.api_group = api_group;
-                resource_attrs.label_selector = label_selector;
-                resource_attrs.field_selector = field_selector;
-            }
-            None => {
-                self.attrs.resource_attrs = Some(ResourceAttributes {
-                    namespace,
-                    resource,
-                    name,
-                    api_group,
-                    field_selector,
-                    label_selector,
-                });
-            }
-        }
-        self
-    }
     pub fn build(self) -> Attributes {
         self.attrs
     }

@@ -14,15 +14,14 @@ use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
 use crate::cedar_authorizer::residuals::DetailedDecision;
-use crate::k8s_authorizer::CombinedResource;
+use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
     Reason, ResourceAttributes, Response, Verb,
 };
 use crate::schema::core::{
-    ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
-    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
+    ENTITY_NAMESPACE, K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT, PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE
 };
 use kube::discovery::Scope;
 
@@ -33,6 +32,9 @@ use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder};
 use super::err::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
+// TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
+//   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
+//   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
 struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
     policies: ast::PolicySet,
     schema: Fragment<RawName>,
@@ -57,6 +59,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             "apiGroup".to_string(),
             "resourceCombined".to_string(),
             "name".to_string(),
+            "path".to_string(),
         ]);
         let substituted_policies = ast::PolicySet::try_from_iter(ps.policies().map(|p| {
             ast::Policy::from_when_clause(
@@ -77,9 +80,11 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
                 "meta::UnknownString".parse().unwrap(),
             ),
             ("name".to_string(), "meta::UnknownString".parse().unwrap()),
+            ("path".to_string(), "meta::UnknownString".parse().unwrap()),
         ]);
 
-        rewrite_schema(&mut schema, &substitutions)?;
+        rewrite_schema(&mut schema, K8S_NS.clone(), &substitutions)?;
+        rewrite_schema(&mut schema, K8S_NONRESOURCE_NS.clone(), &substitutions)?;
 
         Ok(Self {
             policies: substituted_policies,
@@ -188,11 +193,17 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         &self,
         attrs: &Attributes,
     ) -> Result<BuiltEntity, AuthorizerError> {
-        match &attrs.resource_attrs {
-            None => Ok(EntityBuilder::new()
-                .with_attr("path", Some(attrs.path.clone().unwrap_or_default()))
+        match &attrs.request_type {
+            RequestType::NonResource(nonresource_attrs) => Ok(EntityBuilder::new()
+                // TODO: If it is "*", actually keep unknown
+                .with_entity_attr("path", Some(EntityBuilder::unknown_string(
+                    match nonresource_attrs.path {
+                        StarWildcardStringSelector::Any => None,
+                        _ => Some(nonresource_attrs.path.to_string()),
+                    },
+                )))
                 .build(EntityType::EntityType(RESOURCE_NONRESOURCEURL.name.name()))),
-            Some(resource_attrs) => {
+            RequestType::Resource(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()
                     .with_entity_attr(
                         "apiGroup",
@@ -282,12 +293,18 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         // a) the action is get, list, watch, create, update, patch, delete, deletecollection, and
         // b) the resource refers to a resource type in the schema.
 
-        // TODO: If we have a
-
-        let action_entity = format!(r#"k8s::Action::"{action}""#).parse()?;
-
         let principal_entity = self.construct_principal(attrs)?;
         let resource_entity = self.construct_untyped_resource(attrs)?;
+
+        let action_entity = if resource_entity
+            .uid()
+            .to_string()
+            .starts_with("k8s::nonresource::")
+        {
+            format!(r#"k8s::nonresource::Action::"{action}""#).parse()?
+        } else {
+            format!(r#"k8s::Action::"{action}""#).parse()?
+        };
 
         let untyped_req = PartialRequest::new(
             principal_entity.uid().clone().into(),
@@ -348,8 +365,11 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
         }
 
         // Populate the resource attributes from the field selectors, if present.
-        if let Some(resource_attrs) = &mut attrs.resource_attrs {
-            default_from_selectors(resource_attrs)?;
+        match &mut attrs.request_type {
+            RequestType::Resource(resource_attrs) => {
+                default_from_selectors(resource_attrs)?;
+            }
+            RequestType::NonResource(_) => (),
         }
 
         match attrs.verb {
@@ -427,6 +447,9 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
 }
 
 // TODO: Should we validate to only allow only field selectors for specific verbs?
+// TODO: The more generic solution here is to allow multiple values for a field selector,
+// get a residual, and use the SAT/SMT/symbolic compiler method to make sure that all possible values
+// are authorized.
 fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Result<(), ParseError> {
     if let Some(field_selectors) = &built_resource_attrs.field_selector {
         for field_selector in field_selectors {
@@ -567,40 +590,35 @@ mod test {
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
             ("superadmin can do anything on any verb", 
-            AttributesBuilder::new("superadmin", Verb::Any)
-                .with_resource(
+            AttributesBuilder::resource("superadmin", Verb::Any,
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
             ("admin can't do anything on any verb, as they are forbidden to get in the supersecret namespace",
-            AttributesBuilder::new("admin", Verb::Any)
-                .with_resource(
+            AttributesBuilder::resource("admin", Verb::Any,
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("admin can't do anything on the get verb, as they are forbidden to get in the supersecret namespace",
-            AttributesBuilder::new("admin", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("admin", Verb::Get,
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("serviceaccount can get serviceaccounts in its own namespace",
-            AttributesBuilder::new("system:serviceaccount:foo:bar", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
             ("serviceaccount can get serviceaccounts in its own namespace, but through a field selector",
-            AttributesBuilder::new("system:serviceaccount:foo:bar", Verb::Get)
-                .with_resource_and_selectors(
+            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Any,
@@ -610,66 +628,67 @@ mod test {
                 )
                 .build(), Response::allow()),
             ("serviceaccount can get serviceaccounts in its own namespace, but not in the supersecret namespace",
-            AttributesBuilder::new("system:serviceaccount:supersecret:bar", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("system:serviceaccount:supersecret:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("supersecret".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("serviceaccount can get serviceaccounts in a namespace which does not have the label",
-            AttributesBuilder::new("system:serviceaccount:bar:bar", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("system:serviceaccount:bar:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("bar".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
-            ("anonymous user can only get the version",
-            AttributesBuilder::new("system:anonymous", Verb::Get)
-                .with_path("/version")
+            ("anonymous user can get openapi v2",
+            AttributesBuilder::nonresource("system:anonymous", Verb::Get,
+                StarWildcardStringSelector::Exact("/openapi/v2".to_string()))
+                .build(), Response::allow()),
+            ("anonymous user can get openapi v3",
+            AttributesBuilder::nonresource("system:anonymous", Verb::Get,
+                StarWildcardStringSelector::Exact("/openapi/v3/apps.json".to_string()))
                 .build(), Response::allow()),
             ("anonymous user cannot get other paths",
-            AttributesBuilder::new("system:anonymous", Verb::Get)
-                .with_path("/metrics")
+            AttributesBuilder::nonresource("system:anonymous", Verb::Get,
+                StarWildcardStringSelector::Exact("/metrics".to_string()))
+                .build(), Response::no_opinion()),
+            ("anonymous user cannot get any path",
+            AttributesBuilder::nonresource("system:anonymous", Verb::Get,
+                StarWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("a node can only its own node object",
-            AttributesBuilder::new("system:node:node-1", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "nodes".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-1".to_string()))
                 .build(), Response::allow()),
             ("a node cannot get other nodes",
-            AttributesBuilder::new("system:node:node-1", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "nodes".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-2".to_string()))
                 .build(), Response::no_opinion()),
             ("lucas can get pods in the foo namespace",
-            AttributesBuilder::new("lucas", Verb::Get)
-                .with_group("lucas")
-                .with_resource(
+            AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
+                    .with_group("lucas")
                 .build(), Response::allow()),
             ("lucas should not be able to get pods in all namespaces (no opinion expected, NOT conditional)",
-            AttributesBuilder::new("lucas", Verb::Get)
-                .with_group("lucas")
-                .with_resource(
+            AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
+                    .with_group("lucas")
                 .build(), Response::no_opinion()),
             ("user should not be able to get resource foo across all API groups when resource.apiGroup='*'",
-            AttributesBuilder::new("explicitwildcardshouldfail", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("explicitwildcardshouldfail", Verb::Get,
                     StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "foo".to_string() },
                     // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
@@ -677,8 +696,7 @@ mod test {
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("user should be able to get resource foo across all API groups when resource.apiGroup is omitted",
-            AttributesBuilder::new("omittedconditionok", Verb::Get)
-                .with_resource(
+            AttributesBuilder::resource("omittedconditionok", Verb::Get,
                     StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "foo".to_string() },
                     // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
@@ -686,8 +704,7 @@ mod test {
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
             ("singleitemwatch can watch pod bar in the foo namespace",
-            AttributesBuilder::new("singleitemwatch", Verb::Watch)
-                .with_resource_and_selectors(
+            AttributesBuilder::resource_and_selectors("singleitemwatch", Verb::Watch,
                     StarWildcardStringSelector::Exact("".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Any,
@@ -700,8 +717,7 @@ mod test {
                 )
                 .build(), Response::allow()),
                 ("singleitemwatch cannot get pod bar in the foo namespace, as the authorization was only for the watch verb",
-                AttributesBuilder::new("singleitemwatch", Verb::Get)
-                    .with_resource_and_selectors(
+                AttributesBuilder::resource_and_selectors("singleitemwatch", Verb::Get,
                         StarWildcardStringSelector::Exact("".to_string()),
                         CombinedResource::ResourceOnly { resource: "pods".to_string() },
                         EmptyWildcardStringSelector::Any,

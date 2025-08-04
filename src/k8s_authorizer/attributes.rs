@@ -14,19 +14,16 @@ pub struct Attributes {
     // "*" means all.
     pub verb: Verb,
 
-    // path returns the path of the request. It is marked optional, even if the SAR is a
-    // non-resource request
-    pub path: Option<String>,
-    // resource_attrs is Some if this is a resource request.
-    pub resource_attrs: Option<ResourceAttributes>,
+    pub request_type: RequestType,
 }
 
-impl Attributes {
-    // is_resource_request returns true for requests to API resources, like /api/v1/nodes,
-    // and false for non-resource endpoints like /api, /healthz
-    pub fn is_resource_request(&self) -> bool {
-        self.resource_attrs.is_some()
-    }
+pub enum RequestType {
+    Resource(ResourceAttributes),
+    NonResource(NonResourceAttributes),
+}
+
+pub struct NonResourceAttributes {
+    pub path: StarWildcardStringSelector,
 }
 
 // TODO: Add the "post", "put", etc. nonresource verbs

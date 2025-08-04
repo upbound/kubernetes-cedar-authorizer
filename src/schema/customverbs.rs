@@ -1,7 +1,7 @@
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use crate::schema::core::{ACTION_ANY, PRINCIPALS, RESOURCE_RESOURCE};
+use crate::schema::core::{RESOURCE_ACTION_ANY, PRINCIPALS, RESOURCE_RESOURCE};
 
 use super::core::K8S_NS;
 use super::err::Result;
@@ -41,7 +41,7 @@ pub(crate) fn with_custom_verbs(
                     principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
                     context: Default::default(),
                 }),
-                Some(Vec::from([ACTION_ANY.deref().into()])),
+                Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()])),
             );
         }
     }

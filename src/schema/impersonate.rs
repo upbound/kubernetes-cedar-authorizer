@@ -5,7 +5,7 @@ use cedar_policy_core::ast::Name;
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use super::core::{ACTION_ANY, K8S_NS, PRINCIPALS};
+use super::core::{RESOURCE_ACTION_ANY, K8S_NS, PRINCIPALS};
 use super::err::Result;
 use super::types::{ActionUID, CedarTypeName, EntityWrapper, TypeKind, TypeWrapper};
 
@@ -92,7 +92,7 @@ pub(crate) fn with_impersonation(f: &mut Fragment<RawName>) -> Result<()> {
             principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
             context: Default::default(),
         }),
-        Some(Vec::from([ACTION_ANY.deref().into()])),
+        Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()])),
     );
 
     RESOURCE_USERS.apply(f)?;
