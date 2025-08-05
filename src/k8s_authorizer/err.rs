@@ -16,10 +16,10 @@ pub enum AuthorizerError {
     #[error("No Kubernetes namespace found in schema")]
     NoKubernetesNamespace,
     #[error(transparent)]
-    EarlyEvaluationError(#[from] crate::cedar_authorizer::residuals::EarlyEvaluationError),
+    EarlyEvaluationError(#[from] crate::cedar_authorizer::kube_invariants::EarlyEvaluationError),
 
     #[error(transparent)]
-    PolicySetError(#[from] cedar_policy::PolicySetError),
+    SchemaError(#[from] crate::cedar_authorizer::kube_invariants::SchemaError),
     #[error(transparent)]
     AuthorizerParseError(#[from] ParseError),
 }

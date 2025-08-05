@@ -1,7 +1,7 @@
 use k8s_openapi::api::core::v1 as corev1;
 use kube;
 use kube::runtime::reflector;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use std::marker::PhantomData;
 
 use cedar_policy::PolicySet;
@@ -10,10 +10,9 @@ use cedar_policy_core::tpe::entities::PartialEntities;
 use cedar_policy_core::tpe::request::PartialRequest;
 
 use cedar_policy_core::ast::EntityType;
-use cedar_policy_core::validator::json_schema::Fragment;
-use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
-use crate::cedar_authorizer::residuals::DetailedDecision;
+use crate::cedar_authorizer::kube_invariants::{self};
+use crate::cedar_authorizer::kube_invariants::DetailedDecision;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
@@ -21,25 +20,22 @@ use crate::k8s_authorizer::{
 };
 use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
-    ENTITY_NAMESPACE, K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
     PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
-use super::ast::{rewrite_expr, rewrite_schema};
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder};
-use super::err::SchemaError;
+use super::kube_invariants::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
-    policies: ast::PolicySet,
-    schema: Fragment<RawName>,
-    schema_validator: ValidatorSchema,
+struct CedarKubeAuthorizer<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
+    policies: kube_invariants::PolicySet<'a>,
     namespaces: S,
     discovery: D,
 
@@ -47,71 +43,22 @@ struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: 
     // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
-    CedarKubeAuthorizer<S, G, D>
+impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
+    CedarKubeAuthorizer<'a, S, G, D>
 {
+    // TODO: Add possibility to dynamically update the schema and policies later as well.
     pub fn new(
-        ps: PolicySet,
-        mut schema: Fragment<RawName>,
+        policies: kube_invariants::PolicySet<'a>,
         namespaces: S,
         discovery: D,
     ) -> Result<Self, SchemaError> {
-        let substitutions = HashSet::from([
-            "apiGroup".to_string(),
-            "resourceCombined".to_string(),
-            "name".to_string(),
-            "path".to_string(),
-        ]);
-        let substituted_policies = ast::PolicySet::try_from_iter(ps.policies().map(|p| {
-            ast::Policy::from_when_clause(
-                p.effect(),
-                rewrite_expr(&p.as_ref().condition(), &substitutions),
-                p.as_ref().id().clone(),
-                p.as_ref().loc().cloned(),
-            )
-        }))?;
-
-        let substitutions = HashMap::from([
-            (
-                "apiGroup".to_string(),
-                "meta::UnknownString".parse().unwrap(),
-            ),
-            (
-                "resourceCombined".to_string(),
-                "meta::UnknownString".parse().unwrap(),
-            ),
-            ("name".to_string(), "meta::UnknownString".parse().unwrap()),
-            ("path".to_string(), "meta::UnknownString".parse().unwrap()),
-        ]);
-
-        rewrite_schema(&mut schema, K8S_NS.clone(), &substitutions)?;
-        rewrite_schema(&mut schema, K8S_NONRESOURCE_NS.clone(), &substitutions)?;
-
         Ok(Self {
-            policies: substituted_policies,
-            schema: schema.clone(),
-            // k8s_ns: schema.0.get(&K8S_NS).ok_or(SchemaError::NoKubernetesNamespace)?,
-            schema_validator: schema.try_into()?,
+            policies,
             namespaces,
             discovery,
             _phantom: PhantomData,
         })
     }
-    /*fn register_schema(&mut self, schema: Fragment<RawName>) -> Result<(), SchemaError> {
-        self.schema = schema.clone();
-        // self.k8s_ns = self.schema.0.get(&K8S_NS).ok_or(SchemaError::NoKubernetesNamespace)?;
-        self.schema_validator = schema.try_into()?;
-        Ok(())
-    }
-
-    fn register_policies(&mut self, policies: PolicySet) -> Result<(), SchemaError> {
-        // TODO: Add mutex
-        // TODO: What all fields can be wildcards, i.e. partially unknown, and require schema rewrite?
-        // At least:
-        // - k8s::Resource: apiGroup, resourceCombined, name. (namespace is already an entity reference.)
-        self.policies = policies;
-        Ok(())
-    }*/
 
     fn construct_principal(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
         // If the principal is any, it must match any user and use partial evaluation.
@@ -315,7 +262,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             action_entity,
             resource_entity.uid().clone().into(),
             None,
-            &self.schema_validator,
+            self.policies.schema().as_ref(),
         )?;
 
         // Collect all entities into a single map; a chained iterator does not work, as
@@ -324,17 +271,15 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         deduplicated_entities.extend(resource_entity.consume_entities());
         let entities = PartialEntities::from_entities(
             deduplicated_entities.into_iter(),
-            &self.schema_validator,
+            self.policies.schema().as_ref(),
         )?;
 
-        let untyped_resp = super::residuals::tpe(
-            &self.policies,
+        let untyped_resp = self.policies.tpe(
             &untyped_req,
             &entities,
-            &self.schema_validator,
         )?;
 
-        Ok(match untyped_resp.is_authorized_new()?.decision() {
+        Ok(match untyped_resp.decision()? {
             DetailedDecision::Allow(permitted_policy_ids) => {
                 DetailedDecision::Allow(permitted_policy_ids)
             }
@@ -350,17 +295,16 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
     }
 }
 
-impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
-    for CedarKubeAuthorizer<S, G, D>
+impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
+    for CedarKubeAuthorizer<'a, S, G, D>
 {
     fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
         // If * => check with every action in schema in subroutine
 
         let k8s_ns = self
-            .schema
-            .0
-            .get(&K8S_NS)
+            .policies.schema()
+            .get_namespace(&K8S_NS)
             .ok_or(AuthorizerError::NoKubernetesNamespace)?;
 
         let verb_str = attrs.verb.to_string();
@@ -393,7 +337,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
                         }
                         DetailedDecision::Conditional(conditions) => {
                             return Ok(Response::no_opinion().with_errors(errors).with_reason(
-                                Reason::not_unconditionally_allowed(action, conditions),
+                                Reason::not_unconditionally_allowed(action, &conditions),
                             ))
                         }
                         DetailedDecision::Deny(forbidden_policy_ids) => {
@@ -438,9 +382,7 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> Kube
                             &forbidden_policy_ids,
                         ))),
                     DetailedDecision::Conditional(conditional_policies) => {
-                        Ok(Response::conditional(PolicySet::from_policies(
-                            conditional_policies.into_iter().map(|p| p.into()),
-                        )?))
+                        Ok(Response::conditional(conditional_policies))
                     }
                     DetailedDecision::NoOpinion => Ok(Response::no_opinion()
                         .with_reason(Reason::no_allow_policy_match(&action_str))),
@@ -588,8 +530,11 @@ mod test {
             )],
         }]);
 
+        let schema = super::kube_invariants::Schema::new(schema).unwrap();
+        let policies = super::kube_invariants::PolicySet::new(policies.as_ref(), &schema).unwrap();
+
         let authorizer =
-            super::CedarKubeAuthorizer::new(policies, schema, namespace_store, discovery).unwrap();
+            super::CedarKubeAuthorizer::new(policies,  namespace_store, discovery).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![

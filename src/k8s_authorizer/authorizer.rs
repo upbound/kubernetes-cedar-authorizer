@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
 
 use super::err::ParseError;
-use cedar_policy::PolicySet;
+use crate::cedar_authorizer::kube_invariants;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;
 
 use super::attributes::{Attributes, ResourceAttributes, UserInfo, Verb};
@@ -25,8 +25,8 @@ pub trait KubernetesAuthorizer {
 }
 
 #[derive(Debug)]
-pub struct Response {
-    pub decision: Decision,
+pub struct Response<'a> {
+    pub decision: Decision<'a>,
     pub reason: Reason,
     pub errors: Vec<AuthorizerError>,
 }
@@ -47,8 +47,8 @@ impl Reason {
     pub fn no_allow_policy_match(action: &str) -> Self {
         format!("no allow policy matched action {action}").into()
     }
-    pub fn not_unconditionally_allowed(action: &str, conditions: Vec<ast::Policy>) -> Self {
-        format!("action {action} is not unconditionally allowed. conditions: {conditions:?}").into()
+    pub fn not_unconditionally_allowed(action: &str, conditions: &kube_invariants::PolicySet) -> Self {
+        format!("action {action} is not unconditionally allowed. conditions: '{conditions}'").into()
     }
     pub fn with_cause(self, cause: Reason) -> Self {
         match (&self.0, &cause.0) {
@@ -71,8 +71,8 @@ impl Display for Reason {
     }
 }
 
-impl From<Result<Response, AuthorizerError>> for Response {
-    fn from(value: Result<Response, AuthorizerError>) -> Self {
+impl<'a> From<Result<Response<'a>, AuthorizerError>> for Response<'a> {
+    fn from(value: Result<Response<'a>, AuthorizerError>) -> Self {
         match value {
             Ok(r) => r,
             Err(e) => Response {
@@ -84,7 +84,7 @@ impl From<Result<Response, AuthorizerError>> for Response {
     }
 }
 
-impl Response {
+impl<'a> Response<'a> {
     pub fn no_opinion() -> Self {
         Response {
             decision: Decision::NoOpinion,
@@ -113,7 +113,7 @@ impl Response {
             errors: errors.into_iter().collect(),
         }
     }
-    pub fn conditional(policies: PolicySet) -> Self {
+    pub fn conditional(policies: kube_invariants::PolicySet<'a>) -> Self {
         Self {
             decision: Decision::Conditional(policies),
             reason: Default::default(),
@@ -123,14 +123,14 @@ impl Response {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Decision {
+pub enum Decision<'a> {
     Allow,
-    Conditional(PolicySet),
+    Conditional(kube_invariants::PolicySet<'a>),
     Deny,
     NoOpinion,
 }
 
-impl Display for Decision {
+impl<'a> Display for Decision<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Decision::Allow => write!(f, "Decision::Allow"),

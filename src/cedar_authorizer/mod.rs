@@ -1,8 +1,5 @@
 mod ast;
 mod authorizer;
 mod entitybuilder;
-mod err;
 mod kubestore;
-pub(crate) mod residuals;
-
-pub use err::*;
+pub mod kube_invariants;
