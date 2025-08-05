@@ -29,13 +29,19 @@ pub struct PolicySet<'a> {
 
 impl<'a> PolicySet<'a> {
     pub fn new(policies: &ast::PolicySet, schema: &'a super::Schema) -> Result<Self, SchemaError> {
-        // INVARIANT: Make sure that no deny policies could error.
         for p in policies.policies() {
+            // INVARIANT: Make sure that no deny policies could error.
             if p.effect() == ast::Effect::Forbid && Self::expr_could_error(&p.condition()) {
                 return Err(SchemaError::PolicyCouldError(p.id().clone()));
             }
+
+            // INVARIANT: Make sure that no policies (regardless of effect) contain "is k8s::Resource".
+            if Self::expr_has_in_k8s_resource(&p.condition()) {
+                return Err(SchemaError::IsK8sResourceDisallowed);
+            }
         }
 
+        // Rewrite the policies to be compatible with Typed Partial Evaluation, according to rewrites in the schema.
         let substituted_policies = ast::PolicySet::try_from_iter(policies.policies().map(|p| {
             ast::Policy::from_when_clause(
                 p.effect(),
@@ -44,6 +50,7 @@ impl<'a> PolicySet<'a> {
                 p.loc().cloned(),
             )
         }))?;
+
         Ok(Self {
             policies: substituted_policies,
             schema,
@@ -118,6 +125,51 @@ impl<'a> PolicySet<'a> {
                 ast::UnaryOp::Neg => true, // TODO: Could this error?
                 ast::UnaryOp::Not => Self::expr_could_error(arg),
             },
+            ExprKind::Var(_) => false,
+            ExprKind::Lit(_) => false,
+            ExprKind::Slot(_) => false,
+            ExprKind::Unknown(_) => false,
+        }
+    }
+
+    fn expr_has_in_k8s_resource(expr: &Expr) -> bool {
+        match expr.expr_kind() {
+            ExprKind::And { left, right } => {
+                Self::expr_has_in_k8s_resource(left) || Self::expr_has_in_k8s_resource(right)
+            }
+            ExprKind::BinaryApp { arg1, arg2, .. } => {
+                Self::expr_has_in_k8s_resource(arg1) || Self::expr_has_in_k8s_resource(arg2)
+            }
+            ExprKind::ExtensionFunctionApp { args, .. } => {
+                args.iter().any(|a| Self::expr_has_in_k8s_resource(a))
+            }
+            ExprKind::GetAttr { expr, .. } => Self::expr_has_in_k8s_resource(expr),
+            ExprKind::HasAttr { expr, .. } => Self::expr_has_in_k8s_resource(expr),
+
+            ExprKind::If {
+                test_expr,
+                then_expr,
+                else_expr,
+            } => {
+                Self::expr_has_in_k8s_resource(test_expr)
+                    || Self::expr_has_in_k8s_resource(then_expr)
+                    || Self::expr_has_in_k8s_resource(else_expr)
+            }
+            ExprKind::Is { expr, entity_type } => {
+                Self::expr_has_in_k8s_resource(expr)
+                    || match entity_type {
+                        ast::EntityType::EntityType(name) => name.to_string() == "k8s::Resource",
+                        _ => false,
+                    }
+            }
+            ExprKind::Like { expr, .. } => Self::expr_has_in_k8s_resource(expr),
+            ExprKind::Or { left, right } => {
+                Self::expr_has_in_k8s_resource(left) || Self::expr_has_in_k8s_resource(right)
+            }
+            ExprKind::Record(attrs) => attrs.iter().any(|(_, e)| Self::expr_has_in_k8s_resource(e)),
+
+            ExprKind::Set(items) => items.iter().any(Self::expr_has_in_k8s_resource),
+            ExprKind::UnaryApp { arg, .. } => Self::expr_has_in_k8s_resource(arg),
             ExprKind::Var(_) => false,
             ExprKind::Lit(_) => false,
             ExprKind::Slot(_) => false,
@@ -418,5 +470,27 @@ mod test {
 
         let expr: Expr<()> = r#"principal.name == "foo" && resource.apiGroup == "foo""#.parse().unwrap();
         assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));*/
+    }
+
+    #[test]
+    fn test_expr_has_in_k8s_resource() {
+        use super::PolicySet;
+        use cedar_policy_core::ast::Expr;
+
+        // Walk the AST regardless of the actual values, in a nested way.
+        let expr: Expr<()> = r#"false && (true || resource is k8s::Resource)"#.parse().unwrap();
+        assert!(PolicySet::expr_has_in_k8s_resource(&expr));
+
+        let expr: Expr<()> = r#"(resource is k8s::Resource || true) && false"#.parse().unwrap();
+        assert!(PolicySet::expr_has_in_k8s_resource(&expr));
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
+        assert!(!PolicySet::expr_has_in_k8s_resource(&expr));
+
+        let expr: Expr<()> = r#"resource is k8s::nonresource::NonResourceURL"#.parse().unwrap();
+        assert!(!PolicySet::expr_has_in_k8s_resource(&expr));
+
+        let expr: Expr<()> = r#"(if resource is k8s::Resource then resource else resource) is k8s::nonresource::NonResourceURL"#.parse().unwrap();
+        assert!(PolicySet::expr_has_in_k8s_resource(&expr));
     }
 }

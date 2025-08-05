@@ -13,6 +13,8 @@ pub enum SchemaError {
     MissingResourceType(String),
     #[error("Policy could error, although not allowed to: {0}")]
     PolicyCouldError(ast::PolicyID),
+    #[error("Expression 'is k8s::Resource' is disallowed in policies")]
+    IsK8sResourceDisallowed,
 }
 
 #[derive(Debug, thiserror::Error)]

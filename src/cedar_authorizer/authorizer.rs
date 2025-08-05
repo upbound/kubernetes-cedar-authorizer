@@ -4,8 +4,6 @@ use kube::runtime::reflector;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use cedar_policy::PolicySet;
-
 use cedar_policy_core::tpe::entities::PartialEntities;
 use cedar_policy_core::tpe::request::PartialRequest;
 
