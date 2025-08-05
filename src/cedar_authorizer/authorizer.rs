@@ -14,14 +14,15 @@ use cedar_policy_core::validator::json_schema::Fragment;
 use cedar_policy_core::validator::{RawName, ValidatorSchema};
 
 use crate::cedar_authorizer::residuals::DetailedDecision;
-use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
     Reason, ResourceAttributes, Response, Verb,
 };
+use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
-    ENTITY_NAMESPACE, K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT, PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE
+    ENTITY_NAMESPACE, K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 use kube::discovery::Scope;
 
@@ -196,12 +197,15 @@ impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         match &attrs.request_type {
             RequestType::NonResource(nonresource_attrs) => Ok(EntityBuilder::new()
                 // TODO: If it is "*", actually keep unknown
-                .with_entity_attr("path", Some(EntityBuilder::unknown_string(
-                    match nonresource_attrs.path {
-                        StarWildcardStringSelector::Any => None,
-                        _ => Some(nonresource_attrs.path.to_string()),
-                    },
-                )))
+                .with_entity_attr(
+                    "path",
+                    Some(EntityBuilder::unknown_string(
+                        match nonresource_attrs.path {
+                            StarWildcardStringSelector::Any => None,
+                            _ => Some(nonresource_attrs.path.to_string()),
+                        },
+                    )),
+                )
                 .build(EntityType::EntityType(RESOURCE_NONRESOURCEURL.name.name()))),
             RequestType::Resource(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()

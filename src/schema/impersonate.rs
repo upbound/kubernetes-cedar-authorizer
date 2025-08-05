@@ -5,7 +5,7 @@ use cedar_policy_core::ast::Name;
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use super::core::{RESOURCE_ACTION_ANY, K8S_NS, PRINCIPALS};
+use super::core::{K8S_NS, PRINCIPALS, RESOURCE_ACTION_ANY};
 use super::err::Result;
 use super::types::{ActionUID, CedarTypeName, EntityWrapper, TypeKind, TypeWrapper};
 

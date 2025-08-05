@@ -1,7 +1,7 @@
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use crate::schema::core::{RESOURCE_ACTION_ANY, PRINCIPALS, RESOURCE_RESOURCE};
+use crate::schema::core::{PRINCIPALS, RESOURCE_ACTION_ANY, RESOURCE_RESOURCE};
 
 use super::core::K8S_NS;
 use super::err::Result;

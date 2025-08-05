@@ -218,7 +218,11 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                 verb: nonresource_attrs.verb.unwrap_or_default().parse()?,
                 request_type: RequestType::NonResource(NonResourceAttributes {
                     // If the path is not specified, we assume it means "any path".
-                    path: nonresource_attrs.path.map(|p| p.parse()).transpose()?.unwrap_or(StarWildcardStringSelector::Any),
+                    path: nonresource_attrs
+                        .path
+                        .map(|p| p.parse())
+                        .transpose()?
+                        .unwrap_or(StarWildcardStringSelector::Any),
                 }),
             }),
             (Some(_), Some(_)) => Err(ParseError::InvalidSubjectAccessReview(

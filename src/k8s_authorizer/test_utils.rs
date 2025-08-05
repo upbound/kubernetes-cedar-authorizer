@@ -22,26 +22,34 @@ impl AttributesBuilder {
                     extra: BTreeMap::new(),
                 },
                 verb,
-                request_type: RequestType::NonResource(NonResourceAttributes {
-                    path,
-                }),
+                request_type: RequestType::NonResource(NonResourceAttributes { path }),
             },
         }
     }
 
-    pub fn resource(username: &str, verb: Verb, api_group: StarWildcardStringSelector,
+    pub fn resource(
+        username: &str,
+        verb: Verb,
+        api_group: StarWildcardStringSelector,
         resource: CombinedResource,
         namespace: EmptyWildcardStringSelector,
-        name: EmptyWildcardStringSelector,) -> Self {
-        Self::resource_and_selectors(username, verb, api_group, resource, namespace, name, None, None)
+        name: EmptyWildcardStringSelector,
+    ) -> Self {
+        Self::resource_and_selectors(
+            username, verb, api_group, resource, namespace, name, None, None,
+        )
     }
 
-    pub fn resource_and_selectors(username: &str, verb: Verb, api_group: StarWildcardStringSelector,
+    pub fn resource_and_selectors(
+        username: &str,
+        verb: Verb,
+        api_group: StarWildcardStringSelector,
         resource: CombinedResource,
         namespace: EmptyWildcardStringSelector,
         name: EmptyWildcardStringSelector,
         label_selector: Option<Vec<Selector>>,
-        field_selector: Option<Vec<Selector>>,) -> Self {
+        field_selector: Option<Vec<Selector>>,
+    ) -> Self {
         Self {
             attrs: Attributes {
                 user: UserInfo {

@@ -32,7 +32,6 @@ static RESOURCE_ACTIONS: LazyLock<[ActionUID; 10]> = LazyLock::new(|| {
         ActionUID(K8S_NS.clone(), "get".to_string()), // HEAD -> get for resource requests
         ActionUID(K8S_NS.clone(), "patch".to_string()), // Not sure if this applies to non-resource requests
         ActionUID(K8S_NS.clone(), "delete".to_string()), // Not sure if this applies to non-resource requests
-
         ActionUID(K8S_NS.clone(), "list".to_string()),
         ActionUID(K8S_NS.clone(), "watch".to_string()),
         // TIL: Creates can have name from the path already, for subresource requests.
@@ -211,9 +210,9 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(), // Add ancestors here later only when we know of a need.
         apply_to_actions_as_principal: Vec::new(),
-        apply_to_actions_as_resource: Vec::from([
-            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
-        ])
+        apply_to_actions_as_resource: Vec::from(
+            [Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice()],
+        )
         .concat(),
         tags: None,
     },
@@ -228,7 +227,7 @@ pub(crate) static RESOURCE_NONRESOURCEURL: LazyLock<EntityWrapper> =
             members_of_types: Vec::new(),
             apply_to_actions_as_principal: Vec::new(),
             apply_to_actions_as_resource: Vec::from([
-                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice()
             ])
             .concat(),
             tags: None,

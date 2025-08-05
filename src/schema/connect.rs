@@ -122,12 +122,17 @@ pub(super) fn with_connect_rewrites(
 
                     // Remove this GVR from this {verb} action (if it exists); and make sure it exists in the connect action instead
                     let cedar_gvr_type_name = gv.resource_type_name(&gvr.resource)?.full_name();
-                    if let Some(verb_action) = actions_ns.actions.get_mut(verb.as_str()).and_then(|a| a.applies_to.as_mut()) {
-                        verb_action.resource_types
-                        .retain(|type_name| type_name != &cedar_gvr_type_name);
+                    if let Some(verb_action) = actions_ns
+                        .actions
+                        .get_mut(verb.as_str())
+                        .and_then(|a| a.applies_to.as_mut())
+                    {
+                        verb_action
+                            .resource_types
+                            .retain(|type_name| type_name != &cedar_gvr_type_name);
                         eprintln!("Removed from {}: {}", verb, &cedar_gvr_type_name);
                     }
-                    
+
                     let connect_action = actions_ns.actions.get_mut("connect").and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
                         "Expected the connect actions to be populated already, it did not exist".to_string()
                     ))?;
