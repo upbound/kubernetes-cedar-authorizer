@@ -1,12 +1,10 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use cedar_policy_core::ast;
 use cedar_policy_core::validator::types;
 use cedar_policy_core::{
     ast::Annotations,
-    tpe::{
-        residual::{Residual, ResidualKind},
-    },
+    tpe::residual::{Residual, ResidualKind},
 };
 
 use super::EarlyEvaluationError;
@@ -67,15 +65,16 @@ impl<'a> PartialResponseNew<'a> {
         if !non_false_folded_forbid_residuals.is_empty() {
             return match self.allow_decision()? {
                 AllowDecision::Allow(ids) => {
-                    let allowed_residuals = ast::PolicySet::try_from_iter(ids.into_iter().map(|id| {
-                        ast::Policy::from_when_clause_annos(
-                            ast::Effect::Permit,
-                            ast::Expr::val(true).into(),
-                            id,
-                            None,
-                            Annotations::new().into(),
-                        )
-                    }))?;
+                    let allowed_residuals =
+                        ast::PolicySet::try_from_iter(ids.into_iter().map(|id| {
+                            ast::Policy::from_when_clause_annos(
+                                ast::Effect::Permit,
+                                ast::Expr::val(true).into(),
+                                id,
+                                None,
+                                Annotations::new().into(),
+                            )
+                        }))?;
                     let allowed_residuals = super::PolicySet::new(&allowed_residuals, self.schema)?;
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allowed_residuals, false)?; // TODO: Figure out how to handle policy IDs
@@ -121,26 +120,36 @@ impl<'a> PartialResponseNew<'a> {
     }
 
     fn non_false_folded_allow_residuals(&self) -> Result<super::PolicySet<'a>, super::SchemaError> {
-        let ps = ast::PolicySet::try_from_iter(self.residual_permits
-            .iter()
-            .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
-            .map(|(id, r)| {
-                r.residual
-                    .clone()
-                    .to_policy(id.clone(), ast::Effect::Permit, Annotations::new())
-            }))?;
+        let ps = ast::PolicySet::try_from_iter(
+            self.residual_permits
+                .iter()
+                .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
+                .map(|(id, r)| {
+                    r.residual.clone().to_policy(
+                        id.clone(),
+                        ast::Effect::Permit,
+                        Annotations::new(),
+                    )
+                }),
+        )?;
         super::PolicySet::new(&ps, self.schema)
     }
 
-    fn non_false_folded_forbid_residuals(&self) -> Result<super::PolicySet<'a>, super::SchemaError> {
-        let ps = ast::PolicySet::try_from_iter(self.residual_forbids
-            .iter()
-            .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
-            .map(|(id, r)| {
-                r.residual
-                    .clone()
-                    .to_policy(id.clone(), ast::Effect::Forbid, Annotations::new())
-            }))?;
+    fn non_false_folded_forbid_residuals(
+        &self,
+    ) -> Result<super::PolicySet<'a>, super::SchemaError> {
+        let ps = ast::PolicySet::try_from_iter(
+            self.residual_forbids
+                .iter()
+                .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
+                .map(|(id, r)| {
+                    r.residual.clone().to_policy(
+                        id.clone(),
+                        ast::Effect::Forbid,
+                        Annotations::new(),
+                    )
+                }),
+        )?;
         super::PolicySet::new(&ps, self.schema)
     }
 }
@@ -178,24 +187,16 @@ impl FoldedResidual {
                     Self::residual_bool_value_ignoring_potential_errors(right)?,
                 ) {
                     (Some(true), Some(true)) => Some(true),
-                    (Some(false), _) | (_, Some(false)) => {
-                        Some(false)
-                    }
-                    (None, _) | (_, None) => {
-                        None
-                    }
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (None, _) | (_, None) => None,
                 },
                 ResidualKind::Or { left, right } => match (
                     Self::residual_bool_value_ignoring_potential_errors(left)?,
                     Self::residual_bool_value_ignoring_potential_errors(right)?,
                 ) {
-                    (Some(true), _) | (_, Some(true)) => {
-                        Some(true)
-                    }
+                    (Some(true), _) | (_, Some(true)) => Some(true),
                     (Some(false), Some(false)) => Some(false),
-                    (None, _) | (_, None) => {
-                        None
-                    }
+                    (None, _) | (_, None) => None,
                 },
 
                 ResidualKind::HasAttr { .. } => None,
@@ -212,9 +213,7 @@ impl FoldedResidual {
                     Self::residual_bool_value_ignoring_potential_errors(else_expr)?,
                 ) {
                     (Some(true), Some(true)) => Some(true),
-                    (Some(false), Some(false)) => {
-                        Some(false)
-                    }
+                    (Some(false), Some(false)) => Some(false),
                     _ => None,
                 },
                 ResidualKind::BinaryApp { op, .. } => match op {
@@ -231,14 +230,18 @@ impl FoldedResidual {
                     ast::BinaryOp::Add => return Err(EarlyEvaluationError::UnexpectedResidualForm),
                     ast::BinaryOp::Mul => return Err(EarlyEvaluationError::UnexpectedResidualForm),
                     ast::BinaryOp::Sub => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                    ast::BinaryOp::GetTag => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                    ast::BinaryOp::GetTag => {
+                        return Err(EarlyEvaluationError::UnexpectedResidualForm)
+                    }
                 },
                 ResidualKind::UnaryApp { op, arg } => match op {
-                    ast::UnaryOp::Not => match Self::residual_bool_value_ignoring_potential_errors(arg)? {
-                        Some(true) => Some(false),
-                        Some(false) => Some(true),
-                        None => None,
-                    },
+                    ast::UnaryOp::Not => {
+                        match Self::residual_bool_value_ignoring_potential_errors(arg)? {
+                            Some(true) => Some(false),
+                            Some(false) => Some(true),
+                            None => None,
+                        }
+                    }
                     ast::UnaryOp::IsEmpty => None,
                     // Non-boolean return values error; this function should only be called on boolean-typed residuals
                     ast::UnaryOp::Neg => return Err(EarlyEvaluationError::UnexpectedResidualForm),
@@ -252,7 +255,9 @@ impl FoldedResidual {
                     return Err(EarlyEvaluationError::UnexpectedResidualForm)
                 }
                 ResidualKind::Var(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                ResidualKind::Record(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                ResidualKind::Record(_) => {
+                    return Err(EarlyEvaluationError::UnexpectedResidualForm)
+                }
                 ResidualKind::Set(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
             },
             Residual::Concrete { value, .. } => match value.value_kind() {

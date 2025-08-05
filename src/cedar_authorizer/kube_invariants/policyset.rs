@@ -1,13 +1,23 @@
-use std::{collections::HashMap, fmt::{Debug, Display}};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+};
 
-use cedar_policy_core::{ast::{self, Expr, ExprKind, Var}, tpe::{entities::PartialEntities, request::PartialRequest, residual::Residual}, validator::{RawName}};
+use cedar_policy_core::{
+    ast::{self, Expr, ExprKind, Var},
+    tpe::{entities::PartialEntities, request::PartialRequest, residual::Residual},
+    validator::RawName,
+};
 
-use super::{err::{EarlyEvaluationError, SchemaError}, residual::{FoldedResidual, PartialResponseNew}};
+use super::{
+    err::{EarlyEvaluationError, SchemaError},
+    residual::{FoldedResidual, PartialResponseNew},
+};
 
 /// PolicySet is a newtype wrapping Cedar's ast::PolicySet, but adding two important invariants:
 /// 1. Deny policies must never error, i.e. arithmetic and extension function calls cannot be used.
 /// 2. Using "is k8s::Resource" in a policy is disallowed, as it would fail to match typed resources like "core::pods".
-/// 
+///
 /// In addition, this policy set rewrites policies to be compatible with Typed Partial Evaluation, for use-cases where
 /// some attributes are unknown, but some are known, using the rewrite documented in:
 /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
@@ -19,7 +29,6 @@ pub struct PolicySet<'a> {
 
 impl<'a> PolicySet<'a> {
     pub fn new(policies: &ast::PolicySet, schema: &'a super::Schema) -> Result<Self, SchemaError> {
-
         // INVARIANT: Make sure that no deny policies could error.
         for p in policies.policies() {
             if p.effect() == ast::Effect::Forbid && Self::expr_could_error(&p.condition()) {
@@ -35,7 +44,10 @@ impl<'a> PolicySet<'a> {
                 p.loc().cloned(),
             )
         }))?;
-        Ok(Self { policies: substituted_policies, schema })
+        Ok(Self {
+            policies: substituted_policies,
+            schema,
+        })
     }
 
     pub fn schema(&self) -> &'a super::Schema {
@@ -56,7 +68,9 @@ impl<'a> PolicySet<'a> {
                 ast::BinaryOp::Sub => true,
 
                 // These operations only error if their sub-expr does
-                ast::BinaryOp::Contains => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
+                ast::BinaryOp::Contains => {
+                    Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
+                }
                 ast::BinaryOp::ContainsAll => {
                     Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
                 }
@@ -64,11 +78,17 @@ impl<'a> PolicySet<'a> {
                     Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
                 }
                 ast::BinaryOp::Eq => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
-                ast::BinaryOp::GetTag => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
-                ast::BinaryOp::HasTag => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
+                ast::BinaryOp::GetTag => {
+                    Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
+                }
+                ast::BinaryOp::HasTag => {
+                    Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
+                }
                 ast::BinaryOp::In => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
                 ast::BinaryOp::Less => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
-                ast::BinaryOp::LessEq => Self::expr_could_error(arg1) || Self::expr_could_error(arg2),
+                ast::BinaryOp::LessEq => {
+                    Self::expr_could_error(arg1) || Self::expr_could_error(arg2)
+                }
             },
             // Extension functions could error
             ExprKind::ExtensionFunctionApp { .. } => true,
@@ -108,7 +128,7 @@ impl<'a> PolicySet<'a> {
     /// rewrite_expr rewrites an expression to be compatible with Typed Partial Evaluation, for use-cases where
     /// some attributes are unknown, but some are known, using the rewrite documented in:
     /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
-    /// 
+    ///
     /// However, the rewrite is only applied to the special case expression "resource.foo" is rewritten to "resource.foo.value", when
     /// "foo" is in the substitutions set.
     fn rewrite_expr(expr: &Expr, rewritten_resource_attributes: &HashMap<String, RawName>) -> Expr {
@@ -137,12 +157,16 @@ impl<'a> PolicySet<'a> {
                 if is_resource && rewritten_resource_attributes.contains_key(attr.as_str()) {
                     return Expr::get_attr(expr.clone(), "value".into());
                 } else {
-                    Expr::get_attr(Self::rewrite_expr(get_expr, rewritten_resource_attributes), attr.clone())
+                    Expr::get_attr(
+                        Self::rewrite_expr(get_expr, rewritten_resource_attributes),
+                        attr.clone(),
+                    )
                 }
             }
-            ExprKind::HasAttr { expr, attr } => {
-                Expr::has_attr(Self::rewrite_expr(expr, rewritten_resource_attributes), attr.clone())
-            }
+            ExprKind::HasAttr { expr, attr } => Expr::has_attr(
+                Self::rewrite_expr(expr, rewritten_resource_attributes),
+                attr.clone(),
+            ),
 
             ExprKind::If {
                 test_expr,
@@ -153,24 +177,33 @@ impl<'a> PolicySet<'a> {
                 Self::rewrite_expr(then_expr, rewritten_resource_attributes),
                 Self::rewrite_expr(else_expr, rewritten_resource_attributes),
             ),
-            ExprKind::Is { expr, entity_type } => {
-                Expr::is_entity_type(Self::rewrite_expr(expr, rewritten_resource_attributes), entity_type.clone())
-            }
-            ExprKind::Like { expr, pattern } => {
-                Expr::like(Self::rewrite_expr(expr, rewritten_resource_attributes), pattern.clone())
-            }
+            ExprKind::Is { expr, entity_type } => Expr::is_entity_type(
+                Self::rewrite_expr(expr, rewritten_resource_attributes),
+                entity_type.clone(),
+            ),
+            ExprKind::Like { expr, pattern } => Expr::like(
+                Self::rewrite_expr(expr, rewritten_resource_attributes),
+                pattern.clone(),
+            ),
             ExprKind::Or { left, right } => Expr::or(
                 Self::rewrite_expr(left, rewritten_resource_attributes),
                 Self::rewrite_expr(right, rewritten_resource_attributes),
             ),
-            ExprKind::Record(attrs) => Expr::record(
-                attrs
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Self::rewrite_expr(v, rewritten_resource_attributes))),
-            )
+            ExprKind::Record(attrs) => Expr::record(attrs.iter().map(|(k, v)| {
+                (
+                    k.clone(),
+                    Self::rewrite_expr(v, rewritten_resource_attributes),
+                )
+            }))
             .unwrap(),
-            ExprKind::Set(items) => Expr::set(items.iter().map(|e| Self::rewrite_expr(e, rewritten_resource_attributes))),
-            ExprKind::UnaryApp { op, arg } => Expr::unary_app(*op, Self::rewrite_expr(arg, rewritten_resource_attributes)),
+            ExprKind::Set(items) => Expr::set(
+                items
+                    .iter()
+                    .map(|e| Self::rewrite_expr(e, rewritten_resource_attributes)),
+            ),
+            ExprKind::UnaryApp { op, arg } => {
+                Expr::unary_app(*op, Self::rewrite_expr(arg, rewritten_resource_attributes))
+            }
             ExprKind::Var(var) => Expr::var(*var),
             ExprKind::Lit(lit) => Expr::val(lit.clone()),
             ExprKind::Slot(slot_id) => Expr::slot(*slot_id),
@@ -202,7 +235,8 @@ impl<'a> PolicySet<'a> {
         other: &PolicySet,
         rename_duplicates: bool,
     ) -> Result<HashMap<ast::PolicyID, ast::PolicyID>, ast::PolicySetError> {
-        self.policies.merge_policyset(other.as_ref(), rename_duplicates)
+        self.policies
+            .merge_policyset(other.as_ref(), rename_duplicates)
     }
 
     pub fn tpe(
@@ -237,11 +271,8 @@ impl<'a> PolicySet<'a> {
                     true_permits.push(id);
                 }
 
-                (ast::Effect::Permit, Residual::Partial {  .. }) => {
-                    residual_permits.insert(
-                        id,
-                        FoldedResidual::new(residual)?,
-                    );
+                (ast::Effect::Permit, Residual::Partial { .. }) => {
+                    residual_permits.insert(id, FoldedResidual::new(residual)?);
                 }
                 (
                     ast::Effect::Forbid,
@@ -256,16 +287,13 @@ impl<'a> PolicySet<'a> {
                 ) => {
                     true_forbids.push(id);
                 }
-                
-                (ast::Effect::Forbid, Residual::Partial {  .. }) => {
+
+                (ast::Effect::Forbid, Residual::Partial { .. }) => {
                     // Cedar policies (both permit and forbid) are skipped if they error, so we make sure
                     // that forbid errors are impossible, so we can fold e.g. <residual> || true into true.
                     // For our use-case, we should enforce this already at policy submission stage, but here
                     // is a late check just in case for the general case.
-                    residual_forbids.insert(
-                        id,
-                        FoldedResidual::new(residual)?,
-                    );
+                    residual_forbids.insert(id, FoldedResidual::new(residual)?);
                 }
                 (
                     _,
@@ -344,7 +372,14 @@ mod test {
 
         let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
         assert_eq!(
-            PolicySet::rewrite_expr(&expr, &HashMap::from([("apiGroup".to_string(), "meta::UnknownString".parse().unwrap())])).to_string(),
+            PolicySet::rewrite_expr(
+                &expr,
+                &HashMap::from([(
+                    "apiGroup".to_string(),
+                    "meta::UnknownString".parse().unwrap()
+                )])
+            )
+            .to_string(),
             r#"((resource["apiGroup"])["value"]) == "foo""#
         );
 
@@ -352,10 +387,16 @@ mod test {
             .parse()
             .unwrap();
         assert_eq!(
-            PolicySet::rewrite_expr(&expr, &HashMap::from(
-                [("apiGroup".to_string(), "meta::UnknownString".parse().unwrap()),
-                ("name".to_string(), "meta::UnknownString".parse().unwrap())
-                ]))
+            PolicySet::rewrite_expr(
+                &expr,
+                &HashMap::from([
+                    (
+                        "apiGroup".to_string(),
+                        "meta::UnknownString".parse().unwrap()
+                    ),
+                    ("name".to_string(), "meta::UnknownString".parse().unwrap())
+                ])
+            )
             .to_string(),
             r#"(((resource["apiGroup"])["value"]) == "foo") && ([(resource["name"])["value"]].contains("bar"))"#
         );

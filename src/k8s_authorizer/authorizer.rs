@@ -47,7 +47,10 @@ impl Reason {
     pub fn no_allow_policy_match(action: &str) -> Self {
         format!("no allow policy matched action {action}").into()
     }
-    pub fn not_unconditionally_allowed(action: &str, conditions: &kube_invariants::PolicySet) -> Self {
+    pub fn not_unconditionally_allowed(
+        action: &str,
+        conditions: &kube_invariants::PolicySet,
+    ) -> Self {
         format!("action {action} is not unconditionally allowed. conditions: '{conditions}'").into()
     }
     pub fn with_cause(self, cause: Reason) -> Self {

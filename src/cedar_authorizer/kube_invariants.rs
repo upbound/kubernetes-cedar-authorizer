@@ -39,12 +39,12 @@
       any non-rewritten resource types for now.
 */
 
-mod policyset;
-mod schema;
 mod err;
+mod policyset;
 mod residual;
+mod schema;
 
-pub use policyset::PolicySet;
-pub use schema::Schema;
-pub use residual::{DetailedDecision, PartialResponseNew};
 pub use err::*;
+pub use policyset::PolicySet;
+pub use residual::{DetailedDecision, PartialResponseNew};
+pub use schema::Schema;

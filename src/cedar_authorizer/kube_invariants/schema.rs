@@ -1,6 +1,12 @@
-use std::{collections::{HashMap, HashSet}, sync::LazyLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
-use cedar_policy_core::{ast, validator::{RawName, ValidatorSchema}};
+use cedar_policy_core::{
+    ast,
+    validator::{RawName, ValidatorSchema},
+};
 
 use cedar_policy_core::ast::{InternalName, Name, UnreservedId};
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
@@ -12,13 +18,20 @@ use super::err::SchemaError;
 // What resource attributes should be rewritten from a simple Cedar type (e.g. "string") to
 // an entity type (e.g. "meta::UnknownString"), that can be left unknown during typed partial evaluation.
 static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
-    LazyLock::new(|| HashMap::from([
-        ("apiGroup".to_string(), "meta::UnknownString".parse().unwrap()),
-        ("resourceCombined".to_string(), "meta::UnknownString".parse().unwrap()),
-        ("name".to_string(), "meta::UnknownString".parse().unwrap()),
-        ("path".to_string(), "meta::UnknownString".parse().unwrap()),
-    ]));
-
+    LazyLock::new(|| {
+        HashMap::from([
+            (
+                "apiGroup".to_string(),
+                "meta::UnknownString".parse().unwrap(),
+            ),
+            (
+                "resourceCombined".to_string(),
+                "meta::UnknownString".parse().unwrap(),
+            ),
+            ("name".to_string(), "meta::UnknownString".parse().unwrap()),
+            ("path".to_string(), "meta::UnknownString".parse().unwrap()),
+        ])
+    });
 
 pub struct Schema {
     schema: Fragment<RawName>,
@@ -26,10 +39,17 @@ pub struct Schema {
 }
 
 impl Schema {
-
     pub fn new(mut schema: Fragment<RawName>) -> Result<Self, SchemaError> {
-        Self::rewrite_schema(&mut schema, K8S_NS.clone(), &STATIC_RESOURCE_ATTRIBUTE_REWRITES)?;
-        Self::rewrite_schema(&mut schema, K8S_NONRESOURCE_NS.clone(), &STATIC_RESOURCE_ATTRIBUTE_REWRITES)?;
+        Self::rewrite_schema(
+            &mut schema,
+            K8S_NS.clone(),
+            &STATIC_RESOURCE_ATTRIBUTE_REWRITES,
+        )?;
+        Self::rewrite_schema(
+            &mut schema,
+            K8S_NONRESOURCE_NS.clone(),
+            &STATIC_RESOURCE_ATTRIBUTE_REWRITES,
+        )?;
 
         Ok(Self {
             schema: schema.clone(),
@@ -37,7 +57,10 @@ impl Schema {
         })
     }
 
-    pub fn get_namespace(&self, namespace: &Option<ast::Name>) -> Option<&json_schema::NamespaceDefinition<RawName>> {
+    pub fn get_namespace(
+        &self,
+        namespace: &Option<ast::Name>,
+    ) -> Option<&json_schema::NamespaceDefinition<RawName>> {
         self.schema.0.get(namespace)
     }
 
@@ -64,7 +87,7 @@ impl Schema {
                     .map(|n| n.to_string())
                     .unwrap_or_default()
             )))?;
-    
+
         let resource_types: HashSet<InternalName> = actions_ns
             .actions
             .values()
@@ -76,7 +99,7 @@ impl Schema {
                     .qualify_with_name(actions_ns_name.as_ref())
             })
             .collect();
-    
+
         for resource_type in resource_types {
             let resource_type_ns = match schema.0.get_mut(&ns_of_internal_name(&resource_type)) {
                 Some(ns) => ns,

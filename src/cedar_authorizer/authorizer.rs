@@ -1,7 +1,7 @@
 use k8s_openapi::api::core::v1 as corev1;
 use kube;
 use kube::runtime::reflector;
-use std::collections::{HashSet};
+use std::collections::HashSet;
 use std::marker::PhantomData;
 
 use cedar_policy::PolicySet;
@@ -11,8 +11,8 @@ use cedar_policy_core::tpe::request::PartialRequest;
 
 use cedar_policy_core::ast::EntityType;
 
-use crate::cedar_authorizer::kube_invariants::{self};
 use crate::cedar_authorizer::kube_invariants::DetailedDecision;
+use crate::cedar_authorizer::kube_invariants::{self};
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
@@ -34,7 +34,12 @@ use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-struct CedarKubeAuthorizer<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
+struct CedarKubeAuthorizer<
+    'a,
+    S: KubeStore<corev1::Namespace>,
+    G: KubeApiGroup,
+    D: KubeDiscovery<G>,
+> {
     policies: kube_invariants::PolicySet<'a>,
     namespaces: S,
     discovery: D,
@@ -274,10 +279,7 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             self.policies.schema().as_ref(),
         )?;
 
-        let untyped_resp = self.policies.tpe(
-            &untyped_req,
-            &entities,
-        )?;
+        let untyped_resp = self.policies.tpe(&untyped_req, &entities)?;
 
         Ok(match untyped_resp.decision()? {
             DetailedDecision::Allow(permitted_policy_ids) => {
@@ -303,7 +305,8 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> 
         // If * => check with every action in schema in subroutine
 
         let k8s_ns = self
-            .policies.schema()
+            .policies
+            .schema()
             .get_namespace(&K8S_NS)
             .ok_or(AuthorizerError::NoKubernetesNamespace)?;
 
@@ -534,7 +537,7 @@ mod test {
         let policies = super::kube_invariants::PolicySet::new(policies.as_ref(), &schema).unwrap();
 
         let authorizer =
-            super::CedarKubeAuthorizer::new(policies,  namespace_store, discovery).unwrap();
+            super::CedarKubeAuthorizer::new(policies, namespace_store, discovery).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
