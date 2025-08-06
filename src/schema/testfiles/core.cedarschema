@@ -19,7 +19,7 @@ namespace k8s {
     "resourceCombined": __cedar::String
   };
 
-  entity ServiceAccount in [k8s::Namespace] = {
+  entity ServiceAccount = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
     "name": __cedar::String,

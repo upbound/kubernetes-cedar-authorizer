@@ -133,7 +133,8 @@ pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
             ),
         ]),
         kind: TypeKind::EntityType {
-            members_of_types: Vec::from([&ENTITY_NAMESPACE.name]),
+            // TODO: We might want to add "in [k8s::Namespace]" to the type, but not before we know if we _really_ need it.
+            members_of_types: Vec::new(),
             apply_to_actions_as_principal: Vec::from([
                 Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
                 Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),

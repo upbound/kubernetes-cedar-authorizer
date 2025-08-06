@@ -296,7 +296,7 @@ namespace core {
     "v1"?: core::V1ServiceStatus
   };
 
-  entity bindings in [k8s::Namespace] = {
+  entity bindings = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -313,7 +313,7 @@ namespace core {
     "stored"?: core::VersionedComponentStatus
   };
 
-  entity configmaps in [k8s::Namespace] = {
+  entity configmaps = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -322,7 +322,7 @@ namespace core {
     "stored"?: core::VersionedConfigMap
   };
 
-  entity endpoints in [k8s::Namespace] = {
+  entity endpoints = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -331,7 +331,7 @@ namespace core {
     "stored"?: core::VersionedEndpoints
   };
 
-  entity events in [k8s::Namespace] = {
+  entity events = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -340,7 +340,7 @@ namespace core {
     "stored"?: core::VersionedEvent
   };
 
-  entity limitranges in [k8s::Namespace] = {
+  entity limitranges = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -397,7 +397,7 @@ namespace core {
     "stored"?: core::VersionedNodeStatus
   };
 
-  entity persistentvolumeclaims in [k8s::Namespace] = {
+  entity persistentvolumeclaims = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -406,7 +406,7 @@ namespace core {
     "stored"?: core::VersionedPersistentVolumeClaim
   };
 
-  entity persistentvolumeclaims_status in [k8s::Namespace] = {
+  entity persistentvolumeclaims_status = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -431,7 +431,7 @@ namespace core {
     "stored"?: core::VersionedPersistentVolumeStatus
   };
 
-  entity pods in [k8s::Namespace] = {
+  entity pods = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -440,7 +440,7 @@ namespace core {
     "stored"?: core::VersionedPod
   };
 
-  entity pods_attach in [k8s::Namespace] = {
+  entity pods_attach = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -449,7 +449,7 @@ namespace core {
     "stored"?: core::VersionedPodAttachOptions
   };
 
-  entity pods_binding in [k8s::Namespace] = {
+  entity pods_binding = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -458,7 +458,7 @@ namespace core {
     "stored"?: core::VersionedBinding
   };
 
-  entity pods_ephemeralcontainers in [k8s::Namespace] = {
+  entity pods_ephemeralcontainers = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -467,7 +467,7 @@ namespace core {
     "stored"?: core::VersionedPod
   };
 
-  entity pods_eviction in [k8s::Namespace] = {
+  entity pods_eviction = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -476,7 +476,7 @@ namespace core {
     "stored"?: policy::VersionedEviction
   };
 
-  entity pods_exec in [k8s::Namespace] = {
+  entity pods_exec = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -485,7 +485,7 @@ namespace core {
     "stored"?: core::VersionedPodExecOptions
   };
 
-  entity pods_log in [k8s::Namespace] = {
+  entity pods_log = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -494,7 +494,7 @@ namespace core {
     "stored"?: core::VersionedPodLogOptions
   };
 
-  entity pods_portforward in [k8s::Namespace] = {
+  entity pods_portforward = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -503,7 +503,7 @@ namespace core {
     "stored"?: core::VersionedPodPortForwardOptions
   };
 
-  entity pods_proxy in [k8s::Namespace] = {
+  entity pods_proxy = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -512,7 +512,7 @@ namespace core {
     "stored"?: core::VersionedPodProxyOptions
   };
 
-  entity pods_resize in [k8s::Namespace] = {
+  entity pods_resize = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -521,7 +521,7 @@ namespace core {
     "stored"?: core::VersionedPod
   };
 
-  entity pods_status in [k8s::Namespace] = {
+  entity pods_status = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -530,7 +530,7 @@ namespace core {
     "stored"?: core::VersionedPodStatus
   };
 
-  entity podtemplates in [k8s::Namespace] = {
+  entity podtemplates = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -539,7 +539,7 @@ namespace core {
     "stored"?: core::VersionedPodTemplate
   };
 
-  entity replicationcontrollers in [k8s::Namespace] = {
+  entity replicationcontrollers = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -548,7 +548,7 @@ namespace core {
     "stored"?: core::VersionedReplicationController
   };
 
-  entity replicationcontrollers_scale in [k8s::Namespace] = {
+  entity replicationcontrollers_scale = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -557,7 +557,7 @@ namespace core {
     "stored"?: autoscaling::VersionedScale
   };
 
-  entity replicationcontrollers_status in [k8s::Namespace] = {
+  entity replicationcontrollers_status = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -566,7 +566,7 @@ namespace core {
     "stored"?: core::VersionedReplicationControllerStatus
   };
 
-  entity resourcequotas in [k8s::Namespace] = {
+  entity resourcequotas = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -575,7 +575,7 @@ namespace core {
     "stored"?: core::VersionedResourceQuota
   };
 
-  entity resourcequotas_status in [k8s::Namespace] = {
+  entity resourcequotas_status = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -584,7 +584,7 @@ namespace core {
     "stored"?: core::VersionedResourceQuotaStatus
   };
 
-  entity secrets in [k8s::Namespace] = {
+  entity secrets = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -593,7 +593,7 @@ namespace core {
     "stored"?: core::VersionedSecret
   };
 
-  entity serviceaccounts in [k8s::Namespace] = {
+  entity serviceaccounts = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -602,7 +602,7 @@ namespace core {
     "stored"?: core::VersionedServiceAccount
   };
 
-  entity serviceaccounts_token in [k8s::Namespace] = {
+  entity serviceaccounts_token = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -611,7 +611,7 @@ namespace core {
     "stored"?: io::k8s::authentication::VersionedTokenRequest
   };
 
-  entity services in [k8s::Namespace] = {
+  entity services = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -620,7 +620,7 @@ namespace core {
     "stored"?: core::VersionedService
   };
 
-  entity services_proxy in [k8s::Namespace] = {
+  entity services_proxy = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -629,7 +629,7 @@ namespace core {
     "stored"?: core::VersionedServiceProxyOptions
   };
 
-  entity services_status in [k8s::Namespace] = {
+  entity services_status = {
     "apiGroup": __cedar::String,
     "name": __cedar::String,
     "namespace": k8s::Namespace,
@@ -660,7 +660,7 @@ namespace k8s {
     "resourceCombined": __cedar::String
   };
 
-  entity ServiceAccount in [k8s::Namespace] = {
+  entity ServiceAccount = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
     "name": __cedar::String,

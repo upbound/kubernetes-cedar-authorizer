@@ -105,11 +105,8 @@ pub fn with_kubernetes_groupversion(
                 ),
             ]),
             kind: TypeKind::EntityType {
-                members_of_types: if resource.namespaced {
-                    Vec::from([&ENTITY_NAMESPACE.name])
-                } else {
-                    Vec::new()
-                },
+                // TODO: We might want to add "in [k8s::Namespace]" to the type, but not before we know if we _really_ need it.
+                members_of_types: Vec::new(),
                 apply_to_actions_as_principal: Vec::new(),
                 apply_to_actions_as_resource: resource
                     .verbs
