@@ -1,23 +1,32 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use cedar_policy_core::{
     ast::{self, Expr, ExprKind, Var},
-    tpe::{entities::PartialEntities, request::PartialRequest, residual::Residual},
+    tpe::{
+        entities::{PartialEntities, PartialEntity},
+        request::PartialRequest,
+        residual::Residual,
+    },
     validator::RawName,
 };
+use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
 use super::{
     err::{EarlyEvaluationError, SchemaError},
     residual::{FoldedResidual, PartialResponseNew},
 };
 
-/// PolicySet is a newtype wrapping Cedar's ast::PolicySet, but adding two important invariants:
+use itertools::Itertools;
+
+/// PolicySet is a newtype wrapping Cedar's ast::PolicySet, but adding three important invariants:
 /// 1. Deny policies must never error, i.e. arithmetic and extension function calls cannot be used.
 /// 2. Using "is k8s::Resource" in a policy is disallowed, as it would fail to match typed resources like "core::pods".
+/// 3. Only static policies are allowed for now, i.e. policies that do not contain any slots.
 ///
 /// In addition, this policy set rewrites policies to be compatible with Typed Partial Evaluation, for use-cases where
 /// some attributes are unknown, but some are known, using the rewrite documented in:
@@ -38,7 +47,12 @@ impl PolicySet {
 
             // INVARIANT: Make sure that no policies (regardless of effect) contain "is k8s::Resource".
             if Self::expr_has_in_k8s_resource(&p.condition()) {
-                return Err(SchemaError::IsK8sResourceDisallowed);
+                return Err(SchemaError::IsK8sResourceDisallowed(p.id().clone()));
+            }
+
+            // INVARIANT: Make sure that no policies contain slots.
+            if !p.is_static() {
+                return Err(SchemaError::PolicyIsNotStatic(p.id().clone()));
             }
         }
 
@@ -56,6 +70,11 @@ impl PolicySet {
             policies: substituted_policies,
             schema,
         })
+    }
+
+    pub fn from_str(s: &str, schema: Arc<super::Schema>) -> Result<Self, anyhow::Error> {
+        let policies: cedar_policy::PolicySet = s.parse()?;
+        Ok(Self::new(policies.as_ref(), schema)?)
     }
 
     pub fn schema(&self) -> Arc<super::Schema> {
@@ -296,6 +315,11 @@ impl PolicySet {
         request: &PartialRequest,
         entities: &PartialEntities,
     ) -> Result<PartialResponseNew, EarlyEvaluationError> {
+        /*println!("policies: {}", &self.policies);
+        println!("request: {request:?}");
+        for entity in entities.entities() {
+            debug_entity(entity.clone());
+        }*/
         use cedar_policy_core::tpe::tpe_policies;
         let res = tpe_policies(
             &self.policies,
@@ -303,6 +327,7 @@ impl PolicySet {
             entities,
             self.schema.as_ref().as_ref(),
         )?;
+        // dbg!(&res);
 
         let mut true_permits = vec![];
         let mut true_forbids = vec![];
@@ -398,19 +423,63 @@ impl AsRef<ast::PolicySet> for PolicySet {
 
 impl Display for PolicySet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.policies, f)
+        if self.is_empty() {
+            write!(f, "<empty policyset>")
+        } else {
+            write!(f, "{}", self.policies.static_policies().join("\n"),)
+        }
     }
 }
 
 impl Debug for PolicySet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.policies, f)
+        std::fmt::Display::fmt(&self, f)
     }
 }
 
+// TODO: This needs better thought, as it's not really a good idea to compare policies by string equality.
 impl PartialEq for PolicySet {
     fn eq(&self, other: &Self) -> bool {
-        self.policies == other.policies && self.schema.get_fragment() == other.schema.get_fragment()
+        self.policies.to_string() == other.policies.to_string()
+            && self.schema.get_fragment() == other.schema.get_fragment()
+    }
+}
+
+/*#[derive(Serialize, Deserialize)]
+struct PartialEntityWithDebug {
+    uid: ast::EntityUID,
+    attrs: BTreeMap<SmolStr, ast::Value>,
+    ancestors: Option<HashSet<ast::EntityUID>>,
+    tags: Option<BTreeMap<SmolStr, ast::Value>>,
+}*/
+
+fn debug_entity(entity: PartialEntity) {
+    match cedar_policy_core::ast::Entity::new(
+        entity.uid,
+        entity
+            .attrs
+            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| (k.clone().into(), v.clone().into())),
+        HashSet::new(),
+        entity
+            .ancestors
+            .unwrap_or_default()
+            .iter()
+            .map(|uid| uid.clone().into())
+            .collect(),
+        entity
+            .tags
+            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| (k.clone().into(), v.clone().into())),
+        &cedar_policy_core::extensions::Extensions::all_available(),
+    ) {
+        Ok(entity) => match entity.to_json_value() {
+            Ok(s) => println!("{}", serde_json::to_string_pretty(&s).unwrap()),
+            Err(e) => println!("Error: {e:?}"),
+        },
+        Err(e) => println!("Error: {e:?}"),
     }
 }
 

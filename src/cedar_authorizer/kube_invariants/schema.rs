@@ -33,6 +33,7 @@ static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
         ])
     });
 
+#[derive(Clone)]
 pub struct Schema {
     schema: Fragment<RawName>,
     schema_validator: ValidatorSchema,

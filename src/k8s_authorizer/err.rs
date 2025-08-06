@@ -22,6 +22,8 @@ pub enum AuthorizerError {
     SchemaError(#[from] crate::cedar_authorizer::kube_invariants::SchemaError),
     #[error(transparent)]
     AuthorizerParseError(#[from] ParseError),
+    #[error("Unexpected schema shape: {0}")]
+    UnexpectedSchemaShape(String),
 }
 
 // pub type Result<T> = std::result::Result<T, AuthorizerError>;

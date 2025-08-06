@@ -85,3 +85,11 @@ permit (
     resource
 )
 when { principal.username == "singleitemwatch" && resource has namespace &&resource.namespace.name == "foo" && resource.name == "bar" };
+
+
+permit (
+    principal is k8s::Node,
+    action == k8s::Action::"get",
+    resource is core::pods
+)
+when { resource has stored && resource.stored has v1.spec && resource.stored.v1.spec.nodeName == principal.name };

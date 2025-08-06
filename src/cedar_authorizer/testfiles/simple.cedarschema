@@ -40,31 +40,31 @@ namespace k8s {
 
   action "*" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
     context: {}
   };
 
   action "create" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
     context: {}
   };
 
   action "get" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
     context: {}
   };
 
   action "list" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
     context: {}
   };
 
   action "watch" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
     context: {}
   };
 }
@@ -88,14 +88,30 @@ namespace k8s::nonresource {
   };
 }
 
+@apiGroup("")
 namespace core {
+
+  entity nodes = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "nodes"
+    "name": __cedar::String,
+    "request"?: core::VersionedNode,
+    "stored"?: core::VersionedNode
+  };
+
+  entity VersionedNode = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Node"
+    "metadata": meta::V1ObjectMeta,
+    // TODO
+  };
+
   entity pods = {
     "apiGroup": __cedar::String,          // always ""
-    // "apiVersion": __cedar::String,        // always "v1"
-    "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
+    "resourceCombined": __cedar::String,  // always "pods"
+    "name": __cedar::String,
     "namespace": k8s::Namespace,
     "request"?: core::VersionedPod,
-    "resourceCombined": __cedar::String,  // always "pods"
     "stored"?: core::VersionedPod
   };
   entity VersionedPod = {
@@ -118,11 +134,10 @@ namespace core {
 
   entity pods_status = {
     "apiGroup": __cedar::String,          // always ""
-    // "apiVersion": __cedar::String,        // always "v1"
+    "resourceCombined": __cedar::String,  // always "pods/status"
     "name": __cedar::String,
     "namespace": k8s::Namespace,
     "request"?: core::VersionedPodStatus,
-    "resourceCombined": __cedar::String,  // always "pods/status"
     "stored"?: core::VersionedPodStatus
   };
   entity VersionedPodStatus = {

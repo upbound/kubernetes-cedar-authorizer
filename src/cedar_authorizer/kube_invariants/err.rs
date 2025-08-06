@@ -11,10 +11,12 @@ pub enum SchemaError {
     SchemaRewriteError(String),
     #[error("Resource type {0} not found in schema")]
     MissingResourceType(String),
-    #[error("Policy could error, although not allowed to: {0}")]
+    #[error("Policy {0} could error, although not allowed to")]
     PolicyCouldError(ast::PolicyID),
-    #[error("Expression 'is k8s::Resource' is disallowed in policies")]
-    IsK8sResourceDisallowed,
+    #[error("Policy {0} contains the disallowed expression 'is k8s::Resource'")]
+    IsK8sResourceDisallowed(ast::PolicyID),
+    #[error("Policy {0} is not static, only static policies are allowed for now")]
+    PolicyIsNotStatic(ast::PolicyID),
 }
 
 #[derive(Debug, thiserror::Error)]

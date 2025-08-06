@@ -1,13 +1,36 @@
 use std::collections::{BTreeMap, HashMap};
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 
 use cedar_policy_core::{
-    ast::{Eid, EntityType, EntityUID, Value},
+    ast::{Eid, EntityType, EntityUID, InternalName, Name, Value},
     tpe::entities::PartialEntity,
 };
 use smol_str::{SmolStr, ToSmolStr};
 use uuid::Uuid;
 
 use crate::schema::core::{MAP_STRINGSTRING, MAP_STRINGSTRINGSET};
+
+#[cfg(test)]
+static TEST_RNG: LazyLock<Mutex<rand::rngs::StdRng>> = LazyLock::new(|| {
+    use rand::SeedableRng;
+    Mutex::new(rand::rngs::StdRng::seed_from_u64(42))
+});
+
+// This function automatically uses a fixed seed in tests
+pub fn new_uuid() -> Uuid {
+    #[cfg(test)]
+    {
+        use rand::Rng;
+        uuid::Builder::from_random_bytes(TEST_RNG.lock().unwrap().random()).into_uuid()
+        // Fixed seed for tests
+    }
+
+    #[cfg(not(test))]
+    {
+        Uuid::new_v4() // Random UUID in production
+    }
+}
 
 pub(super) struct EntityBuilder {
     entity_eid: Option<Eid>,
@@ -25,7 +48,7 @@ impl EntityBuilder {
     }
 
     pub(super) fn unknown_string(optional_value: Option<String>) -> BuiltEntity {
-        let entity_type = EntityType::EntityType("meta::UnknownString".parse().unwrap());
+        let entity_type = "meta::UnknownString".parse().unwrap();
         match optional_value {
             Some(value) => EntityBuilder::new()
                 .with_attr("value", Some(value))
@@ -155,23 +178,28 @@ impl EntityBuilder {
         self.record_builder.add_record_attr(key, record);
     }
 
-    pub(super) fn build_unknown(entity_type: EntityType) -> BuiltEntity {
+    pub(super) fn build_unknown(entity_type_name: Name) -> BuiltEntity {
         BuiltEntity {
             uid: EntityUID::from_components(
-                entity_type,
-                Eid::new(Uuid::new_v4().to_smolstr()),
+                EntityType::EntityType(entity_type_name),
+                Eid::new(new_uuid().to_smolstr()),
                 None,
             ),
             entities: HashMap::new(),
         }
     }
 
-    pub(super) fn build(mut self, entity_type: EntityType) -> BuiltEntity {
+    // TODO: Make this cleaner?
+    pub(super) fn build_unknown_internal_name(entity_type_name: InternalName) -> BuiltEntity {
+        Self::build_unknown(entity_type_name.to_string().parse().unwrap())
+    }
+
+    pub(super) fn build(mut self, entity_type_name: Name) -> BuiltEntity {
         let eid = match self.entity_eid {
             Some(eid) => eid,
-            None => Eid::new(Uuid::new_v4().to_smolstr()),
+            None => Eid::new(new_uuid().to_smolstr()),
         };
-        let uid = EntityUID::from_components(entity_type, eid, None);
+        let uid = EntityUID::from_components(EntityType::EntityType(entity_type_name), eid, None);
 
         self.record_builder.entities.insert(
             uid.clone(),
@@ -320,7 +348,7 @@ impl RecordBuilder {
                 EntityBuilder::new()
                     .with_string_set("keys", Some(map.keys().cloned()))
                     .with_tags(map.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
-                    .build(EntityType::EntityType(MAP_STRINGSTRING.0.name())),
+                    .build(MAP_STRINGSTRING.0.name()),
             ),
         );
     }
@@ -350,7 +378,7 @@ impl RecordBuilder {
                             })
                             .collect(),
                     )
-                    .build(EntityType::EntityType(MAP_STRINGSTRINGSET.0.name())),
+                    .build(MAP_STRINGSTRINGSET.0.name()),
             ),
         );
     }
