@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
+    sync::Arc,
 };
 
 use cedar_policy_core::{
@@ -22,13 +23,13 @@ use super::{
 /// some attributes are unknown, but some are known, using the rewrite documented in:
 /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
 // TODO: Consider if it's worth taking the schema as a reference here, or just owning it.
-pub struct PolicySet<'a> {
+pub struct PolicySet {
     pub(super) policies: ast::PolicySet,
-    schema: &'a super::Schema,
+    schema: Arc<super::Schema>,
 }
 
-impl<'a> PolicySet<'a> {
-    pub fn new(policies: &ast::PolicySet, schema: &'a super::Schema) -> Result<Self, SchemaError> {
+impl PolicySet {
+    pub fn new(policies: &ast::PolicySet, schema: Arc<super::Schema>) -> Result<Self, SchemaError> {
         for p in policies.policies() {
             // INVARIANT: Make sure that no deny policies could error.
             if p.effect() == ast::Effect::Forbid && Self::expr_could_error(&p.condition()) {
@@ -57,8 +58,8 @@ impl<'a> PolicySet<'a> {
         })
     }
 
-    pub fn schema(&self) -> &'a super::Schema {
-        self.schema
+    pub fn schema(&self) -> Arc<super::Schema> {
+        self.schema.clone()
     }
 
     /// expr_could_error checks if an expression could error, i.e. if it contains an arithmetic or extension function call.
@@ -159,7 +160,6 @@ impl<'a> PolicySet<'a> {
                 Self::expr_has_in_k8s_resource(expr)
                     || match entity_type {
                         ast::EntityType::EntityType(name) => name.to_string() == "k8s::Resource",
-                        _ => false,
                     }
             }
             ExprKind::Like { expr, .. } => Self::expr_has_in_k8s_resource(expr),
@@ -297,7 +297,12 @@ impl<'a> PolicySet<'a> {
         entities: &PartialEntities,
     ) -> Result<PartialResponseNew, EarlyEvaluationError> {
         use cedar_policy_core::tpe::tpe_policies;
-        let res = tpe_policies(&self.policies, request, entities, self.schema.as_ref())?;
+        let res = tpe_policies(
+            &self.policies,
+            request,
+            entities,
+            self.schema.as_ref().as_ref(),
+        )?;
 
         let mut true_permits = vec![];
         let mut true_forbids = vec![];
@@ -375,7 +380,7 @@ impl<'a> PolicySet<'a> {
         }
 
         Ok(PartialResponseNew {
-            schema: self.schema,
+            schema: self.schema.clone(),
             true_permits,
             residual_permits,
             true_forbids,
@@ -385,25 +390,25 @@ impl<'a> PolicySet<'a> {
     }
 }
 
-impl<'a> AsRef<ast::PolicySet> for PolicySet<'a> {
+impl AsRef<ast::PolicySet> for PolicySet {
     fn as_ref(&self) -> &ast::PolicySet {
         &self.policies
     }
 }
 
-impl Display for PolicySet<'_> {
+impl Display for PolicySet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.policies, f)
     }
 }
 
-impl Debug for PolicySet<'_> {
+impl Debug for PolicySet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.policies, f)
     }
 }
 
-impl PartialEq for PolicySet<'_> {
+impl PartialEq for PolicySet {
     fn eq(&self, other: &Self) -> bool {
         self.policies == other.policies && self.schema.get_fragment() == other.schema.get_fragment()
     }

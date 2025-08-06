@@ -32,13 +32,8 @@ use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-struct CedarKubeAuthorizer<
-    'a,
-    S: KubeStore<corev1::Namespace>,
-    G: KubeApiGroup,
-    D: KubeDiscovery<G>,
-> {
-    policies: kube_invariants::PolicySet<'a>,
+struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
+    policies: kube_invariants::PolicySet,
     namespaces: S,
     discovery: D,
 
@@ -47,11 +42,11 @@ struct CedarKubeAuthorizer<
 }
 
 impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
-    CedarKubeAuthorizer<'a, S, G, D>
+    CedarKubeAuthorizer<S, G, D>
 {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
     pub fn new(
-        policies: kube_invariants::PolicySet<'a>,
+        policies: kube_invariants::PolicySet,
         namespaces: S,
         discovery: D,
     ) -> Result<Self, SchemaError> {
@@ -265,7 +260,7 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
             action_entity,
             resource_entity.uid().clone().into(),
             None,
-            self.policies.schema().as_ref(),
+            self.policies.schema().as_ref().as_ref(),
         )?;
 
         // Collect all entities into a single map; a chained iterator does not work, as
@@ -274,7 +269,7 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
         deduplicated_entities.extend(resource_entity.consume_entities());
         let entities = PartialEntities::from_entities(
             deduplicated_entities.into_iter(),
-            self.policies.schema().as_ref(),
+            self.policies.schema().as_ref().as_ref(),
         )?;
 
         let untyped_resp = self.policies.tpe(&untyped_req, &entities)?;
@@ -295,16 +290,15 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
     }
 }
 
-impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
-    for CedarKubeAuthorizer<'a, S, G, D>
+impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
+    for CedarKubeAuthorizer<S, G, D>
 {
     fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
         // If * => check with every action in schema in subroutine
 
-        let k8s_ns = self
-            .policies
-            .schema()
+        let schema = self.policies.schema();
+        let k8s_ns = schema
             .get_namespace(&K8S_NS)
             .ok_or(AuthorizerError::NoKubernetesNamespace)?;
 
@@ -532,7 +526,8 @@ mod test {
         }]);
 
         let schema = super::kube_invariants::Schema::new(schema).unwrap();
-        let policies = super::kube_invariants::PolicySet::new(policies.as_ref(), &schema).unwrap();
+        let policies =
+            super::kube_invariants::PolicySet::new(policies.as_ref(), schema.into()).unwrap();
 
         let authorizer =
             super::CedarKubeAuthorizer::new(policies, namespace_store, discovery).unwrap();

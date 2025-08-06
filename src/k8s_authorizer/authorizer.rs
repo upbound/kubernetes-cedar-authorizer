@@ -25,8 +25,8 @@ pub trait KubernetesAuthorizer {
 }
 
 #[derive(Debug)]
-pub struct Response<'a> {
-    pub decision: Decision<'a>,
+pub struct Response {
+    pub decision: Decision,
     pub reason: Reason,
     pub errors: Vec<AuthorizerError>,
 }
@@ -74,8 +74,8 @@ impl Display for Reason {
     }
 }
 
-impl<'a> From<Result<Response<'a>, AuthorizerError>> for Response<'a> {
-    fn from(value: Result<Response<'a>, AuthorizerError>) -> Self {
+impl From<Result<Response, AuthorizerError>> for Response {
+    fn from(value: Result<Response, AuthorizerError>) -> Self {
         match value {
             Ok(r) => r,
             Err(e) => Response {
@@ -87,7 +87,7 @@ impl<'a> From<Result<Response<'a>, AuthorizerError>> for Response<'a> {
     }
 }
 
-impl<'a> Response<'a> {
+impl Response {
     pub fn no_opinion() -> Self {
         Response {
             decision: Decision::NoOpinion,
@@ -116,7 +116,7 @@ impl<'a> Response<'a> {
             errors: errors.into_iter().collect(),
         }
     }
-    pub fn conditional(policies: kube_invariants::PolicySet<'a>) -> Self {
+    pub fn conditional(policies: kube_invariants::PolicySet) -> Self {
         Self {
             decision: Decision::Conditional(policies),
             reason: Default::default(),
@@ -126,14 +126,14 @@ impl<'a> Response<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Decision<'a> {
+pub enum Decision {
     Allow,
-    Conditional(kube_invariants::PolicySet<'a>),
+    Conditional(kube_invariants::PolicySet),
     Deny,
     NoOpinion,
 }
 
-impl<'a> Display for Decision<'a> {
+impl Display for Decision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Decision::Allow => write!(f, "Decision::Allow"),

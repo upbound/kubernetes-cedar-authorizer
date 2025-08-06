@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use cedar_policy_core::ast;
 use cedar_policy_core::validator::types;
@@ -10,8 +11,8 @@ use cedar_policy_core::{
 use super::EarlyEvaluationError;
 
 #[derive(Clone)]
-pub struct PartialResponseNew<'a> {
-    pub(super) schema: &'a super::Schema,
+pub struct PartialResponseNew {
+    pub(super) schema: Arc<super::Schema>,
     // TODO: Add Annotations here to be able to re-construct the policies?
     /// All of the [`Effect::Permit`] policies that were satisfied
     pub true_permits: Vec<ast::PolicyID>,
@@ -25,11 +26,11 @@ pub struct PartialResponseNew<'a> {
     pub errors: HashMap<ast::PolicyID, types::Type>,
 }
 
-pub enum DetailedDecision<'a> {
+pub enum DetailedDecision {
     // If the request is denied with this non-empty enum, then at least one deny rule matched
     Deny(Vec<ast::PolicyID>),
     // If we got to conditional, then either we got a conditional deny policy and at least some true or conditional allow policies.
-    Conditional(super::PolicySet<'a>),
+    Conditional(super::PolicySet),
     // If we are allowed, then we know that there were no deny policies that were either true or residual that did not fold to false,
     // AND we had at least one allow policy that was always true.
     Allow(Vec<ast::PolicyID>),
@@ -37,13 +38,13 @@ pub enum DetailedDecision<'a> {
     NoOpinion,
 }
 
-enum AllowDecision<'a> {
+enum AllowDecision {
     Allow(Vec<ast::PolicyID>),
-    Conditional(super::PolicySet<'a>),
+    Conditional(super::PolicySet),
     NoMatch,
 }
 
-impl<'a> PartialResponseNew<'a> {
+impl PartialResponseNew {
     // - If there are any true denies, deny.
     // (- If there are any folded true denies, deny.)
     // We can add this optimization later.
@@ -56,7 +57,7 @@ impl<'a> PartialResponseNew<'a> {
     // - If there are any residual allows (that do not fold to false), conditional
     //   At this point, it is known that there are no residual denies.
     // - Otherwise (only false denies and allows, or none), no opinion.
-    pub fn decision(&self) -> Result<DetailedDecision<'a>, super::SchemaError> {
+    pub fn decision(&self) -> Result<DetailedDecision, super::SchemaError> {
         if !self.true_forbids.is_empty() {
             return Ok(DetailedDecision::Deny(self.true_forbids.clone()));
         }
@@ -75,7 +76,8 @@ impl<'a> PartialResponseNew<'a> {
                                 Annotations::new().into(),
                             )
                         }))?;
-                    let allowed_residuals = super::PolicySet::new(&allowed_residuals, self.schema)?;
+                    let allowed_residuals =
+                        super::PolicySet::new(&allowed_residuals, self.schema.clone())?;
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allowed_residuals, false)?; // TODO: Figure out how to handle policy IDs
                     Ok(DetailedDecision::Conditional(residual_policies))
@@ -106,7 +108,7 @@ impl<'a> PartialResponseNew<'a> {
     // - If there are any residual allows (that do not fold to false), conditional
     //   At this point, it is known that there are no residual denies.
     // - Otherwise (only false denies and allows, or none), no opinion.
-    fn allow_decision(&self) -> Result<AllowDecision<'a>, super::SchemaError> {
+    fn allow_decision(&self) -> Result<AllowDecision, super::SchemaError> {
         if !self.true_permits.is_empty() {
             return Ok(AllowDecision::Allow(self.true_forbids.clone()));
         }
@@ -119,7 +121,7 @@ impl<'a> PartialResponseNew<'a> {
         Ok(AllowDecision::NoMatch)
     }
 
-    fn non_false_folded_allow_residuals(&self) -> Result<super::PolicySet<'a>, super::SchemaError> {
+    fn non_false_folded_allow_residuals(&self) -> Result<super::PolicySet, super::SchemaError> {
         let ps = ast::PolicySet::try_from_iter(
             self.residual_permits
                 .iter()
@@ -132,12 +134,10 @@ impl<'a> PartialResponseNew<'a> {
                     )
                 }),
         )?;
-        super::PolicySet::new(&ps, self.schema)
+        super::PolicySet::new(&ps, self.schema.clone())
     }
 
-    fn non_false_folded_forbid_residuals(
-        &self,
-    ) -> Result<super::PolicySet<'a>, super::SchemaError> {
+    fn non_false_folded_forbid_residuals(&self) -> Result<super::PolicySet, super::SchemaError> {
         let ps = ast::PolicySet::try_from_iter(
             self.residual_forbids
                 .iter()
@@ -150,7 +150,7 @@ impl<'a> PartialResponseNew<'a> {
                     )
                 }),
         )?;
-        super::PolicySet::new(&ps, self.schema)
+        super::PolicySet::new(&ps, self.schema.clone())
     }
 }
 
