@@ -7,6 +7,8 @@ edition = "2021"
 anyhow = "1.0.98"
 cedar-policy = { git = "https://github.com/cedar-policy/cedar.git", branch = "main", features = ["tpe"] }
 cedar-policy-core = { git = "https://github.com/cedar-policy/cedar.git", branch = "main", features = ["tpe"] }
+cel = { path = "../cel-rust/cel" }
+cel-cxx = "0.2.0"
 futures-util = "0.3.31"
 http = "1.3.1"
 itertools = "0.14.0"
