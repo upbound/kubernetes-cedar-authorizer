@@ -1,29 +1,18 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use cedar_policy_core::ast;
-use cedar_policy_core::validator::types;
 use cedar_policy_core::{
     ast::Annotations,
+    tpe,
     tpe::residual::{Residual, ResidualKind},
 };
 
 use super::EarlyEvaluationError;
 
 #[derive(Clone)]
-pub struct PartialResponseNew {
+pub struct PartialResponseNew<'a> {
     pub(super) schema: Arc<super::Schema>,
-    // TODO: Add Annotations here to be able to re-construct the policies?
-    /// All of the [`Effect::Permit`] policies that were satisfied
-    pub true_permits: Vec<ast::PolicyID>,
-    /// All of the [`Effect::Permit`] policies that evaluated to a residual
-    pub residual_permits: HashMap<ast::PolicyID, FoldedResidual>,
-    /// All of the [`Effect::Forbid`] policies that were satisfied
-    pub true_forbids: Vec<ast::PolicyID>,
-    /// All of the [`Effect::Forbid`] policies that evaluated to a residual
-    pub residual_forbids: HashMap<ast::PolicyID, FoldedResidual>,
-    // All of the policy errors encountered during evaluation
-    pub errors: HashMap<ast::PolicyID, types::Type>,
+    pub tpe_response: tpe::response::Response<'a>,
 }
 
 pub enum DetailedDecision {
@@ -44,7 +33,7 @@ enum AllowDecision {
     NoMatch,
 }
 
-impl PartialResponseNew {
+impl<'a> PartialResponseNew<'a> {
     // - If there are any true denies, deny.
     // (- If there are any folded true denies, deny.)
     // We can add this optimization later.
@@ -58,8 +47,10 @@ impl PartialResponseNew {
     //   At this point, it is known that there are no residual denies.
     // - Otherwise (only false denies and allows, or none), no opinion.
     pub fn decision(&self) -> Result<DetailedDecision, super::SchemaError> {
-        if !self.true_forbids.is_empty() {
-            return Ok(DetailedDecision::Deny(self.true_forbids.clone()));
+        if self.tpe_response.satisfied_forbids().count() > 0 {
+            return Ok(DetailedDecision::Deny(
+                self.tpe_response.satisfied_forbids().cloned().collect(),
+            ));
         }
 
         let non_false_folded_forbid_residuals = self.non_false_folded_forbid_residuals()?;
@@ -109,8 +100,10 @@ impl PartialResponseNew {
     //   At this point, it is known that there are no residual denies.
     // - Otherwise (only false denies and allows, or none), no opinion.
     fn allow_decision(&self) -> Result<AllowDecision, super::SchemaError> {
-        if !self.true_permits.is_empty() {
-            return Ok(AllowDecision::Allow(self.true_forbids.clone()));
+        if self.tpe_response.satisfied_permits().count() > 0 {
+            return Ok(AllowDecision::Allow(
+                self.tpe_response.satisfied_permits().cloned().collect(),
+            ));
         }
 
         let non_false_folded_allow_residuals = self.non_false_folded_allow_residuals()?;
@@ -122,156 +115,137 @@ impl PartialResponseNew {
     }
 
     fn non_false_folded_allow_residuals(&self) -> Result<super::PolicySet, super::SchemaError> {
+        // TODO: Improve the ergonomics of the upstream library API, this is unnecessarily complicated.
         let ps = ast::PolicySet::try_from_iter(
-            self.residual_permits
-                .iter()
-                .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
-                .map(|(id, r)| {
-                    r.residual.clone().to_policy(
-                        id.clone(),
-                        ast::Effect::Permit,
-                        Annotations::new(),
-                    )
-                }),
+            self.tpe_response
+                .non_trival_permits()
+                .map(|id| (id, self.tpe_response.get_residual(id).unwrap()))
+                .flat_map(
+                    |(id, r)| match residual_bool_value_ignoring_potential_errors(r) {
+                        Ok(Some(false)) => None,
+                        Ok(Some(true)) | Ok(None) => Some(Ok(self
+                            .tpe_response
+                            .residual_policies()
+                            .into_iter()
+                            .find(|p| p.id() == id)
+                            .unwrap())),
+                        Err(e) => Some(Err(e)),
+                    },
+                )
+                .collect::<Result<Vec<_>, _>>()?,
         )?;
         super::PolicySet::new(&ps, self.schema.clone())
     }
 
     fn non_false_folded_forbid_residuals(&self) -> Result<super::PolicySet, super::SchemaError> {
+        // TODO: Improve the ergonomics of the upstream library API, this is unnecessarily complicated.
         let ps = ast::PolicySet::try_from_iter(
-            self.residual_forbids
-                .iter()
-                .filter(|(_, r)| !matches!(r.error_free_value, Some(false)))
-                .map(|(id, r)| {
-                    r.residual.clone().to_policy(
-                        id.clone(),
-                        ast::Effect::Forbid,
-                        Annotations::new(),
-                    )
-                }),
+            self.tpe_response
+                .non_trival_forbids()
+                .map(|id| (id, self.tpe_response.get_residual(id).unwrap()))
+                .flat_map(
+                    |(id, r)| match residual_bool_value_ignoring_potential_errors(r) {
+                        Ok(Some(false)) => None,
+                        Ok(Some(true)) | Ok(None) => Some(Ok(self
+                            .tpe_response
+                            .residual_policies()
+                            .into_iter()
+                            .find(|p| p.id() == id)
+                            .unwrap())),
+                        Err(e) => Some(Err(e)),
+                    },
+                )
+                .collect::<Result<Vec<_>, _>>()?,
         )?;
         super::PolicySet::new(&ps, self.schema.clone())
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FoldedResidual {
-    residual: Residual,
-    error_free_value: Option<bool>,
-}
+// TODO: We could probably already rely on the TPE to have validated all of this correctly,
+// and just return None if the residual form is unexpected, it "shouldn't" happen.
+fn residual_bool_value_ignoring_potential_errors(
+    r: &Residual,
+) -> Result<Option<bool>, super::EarlyEvaluationError> {
+    Ok(match r {
+        Residual::Partial { kind, .. } => match kind {
+            // Always boolean return-value expressions
+            ResidualKind::And { left, right } => match (
+                residual_bool_value_ignoring_potential_errors(left)?,
+                residual_bool_value_ignoring_potential_errors(right)?,
+            ) {
+                (Some(true), Some(true)) => Some(true),
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (None, _) | (_, None) => None,
+            },
+            ResidualKind::Or { left, right } => match (
+                residual_bool_value_ignoring_potential_errors(left)?,
+                residual_bool_value_ignoring_potential_errors(right)?,
+            ) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                (None, _) | (_, None) => None,
+            },
 
-impl FoldedResidual {
-    pub fn new(residual: Residual) -> Result<Self, super::EarlyEvaluationError> {
-        Ok(Self {
-            error_free_value: Self::residual_bool_value_ignoring_potential_errors(&residual)?,
-            residual,
-        })
-    }
+            ResidualKind::HasAttr { .. } => None,
+            ResidualKind::Is { .. } => None,
+            ResidualKind::Like { .. } => None,
 
-    /// In case there are no errors, and error_free_value is Some, that is the value the residual is known to evaluate to,
-    /// when all data is available.
-    pub fn error_free_value(&self) -> Option<bool> {
-        self.error_free_value
-    }
-
-    // TODO: We could probably already rely on the TPE to have validated all of this correctly,
-    // and just return None if the residual form is unexpected, it "shouldn't" happen.
-    fn residual_bool_value_ignoring_potential_errors(
-        r: &Residual,
-    ) -> Result<Option<bool>, super::EarlyEvaluationError> {
-        Ok(match r {
-            Residual::Partial { kind, .. } => match kind {
-                // Always boolean return-value expressions
-                ResidualKind::And { left, right } => match (
-                    Self::residual_bool_value_ignoring_potential_errors(left)?,
-                    Self::residual_bool_value_ignoring_potential_errors(right)?,
-                ) {
-                    (Some(true), Some(true)) => Some(true),
-                    (Some(false), _) | (_, Some(false)) => Some(false),
-                    (None, _) | (_, None) => None,
-                },
-                ResidualKind::Or { left, right } => match (
-                    Self::residual_bool_value_ignoring_potential_errors(left)?,
-                    Self::residual_bool_value_ignoring_potential_errors(right)?,
-                ) {
-                    (Some(true), _) | (_, Some(true)) => Some(true),
-                    (Some(false), Some(false)) => Some(false),
-                    (None, _) | (_, None) => None,
-                },
-
-                ResidualKind::HasAttr { .. } => None,
-                ResidualKind::Is { .. } => None,
-                ResidualKind::Like { .. } => None,
-
-                // Potentially boolean return-value expressions
-                ResidualKind::If {
-                    then_expr,
-                    else_expr,
-                    ..
-                } => match (
-                    Self::residual_bool_value_ignoring_potential_errors(then_expr)?,
-                    Self::residual_bool_value_ignoring_potential_errors(else_expr)?,
-                ) {
-                    (Some(true), Some(true)) => Some(true),
-                    (Some(false), Some(false)) => Some(false),
-                    _ => None,
-                },
-                ResidualKind::BinaryApp { op, .. } => match op {
-                    ast::BinaryOp::Contains => None,
-                    ast::BinaryOp::ContainsAll => None,
-                    ast::BinaryOp::ContainsAny => None,
-                    ast::BinaryOp::Eq => None,
-                    ast::BinaryOp::HasTag => None,
-                    ast::BinaryOp::In => None,
-                    ast::BinaryOp::Less => None,
-                    ast::BinaryOp::LessEq => None,
-
-                    // Non-boolean return values error; this function should only be called on boolean-typed residuals
-                    ast::BinaryOp::Add => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                    ast::BinaryOp::Mul => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                    ast::BinaryOp::Sub => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                    ast::BinaryOp::GetTag => {
-                        return Err(EarlyEvaluationError::UnexpectedResidualForm)
-                    }
-                },
-                ResidualKind::UnaryApp { op, arg } => match op {
-                    ast::UnaryOp::Not => {
-                        match Self::residual_bool_value_ignoring_potential_errors(arg)? {
-                            Some(true) => Some(false),
-                            Some(false) => Some(true),
-                            None => None,
-                        }
-                    }
-                    ast::UnaryOp::IsEmpty => None,
-                    // Non-boolean return values error; this function should only be called on boolean-typed residuals
-                    ast::UnaryOp::Neg => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                },
+            // Potentially boolean return-value expressions
+            ResidualKind::If {
+                then_expr,
+                else_expr,
+                ..
+            } => match (
+                residual_bool_value_ignoring_potential_errors(then_expr)?,
+                residual_bool_value_ignoring_potential_errors(else_expr)?,
+            ) {
+                (Some(true), Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            ResidualKind::BinaryApp { op, .. } => match op {
+                ast::BinaryOp::Contains => None,
+                ast::BinaryOp::ContainsAll => None,
+                ast::BinaryOp::ContainsAny => None,
+                ast::BinaryOp::Eq => None,
+                ast::BinaryOp::HasTag => None,
+                ast::BinaryOp::In => None,
+                ast::BinaryOp::Less => None,
+                ast::BinaryOp::LessEq => None,
 
                 // Non-boolean return values error; this function should only be called on boolean-typed residuals
-                ResidualKind::GetAttr { .. } => {
-                    return Err(EarlyEvaluationError::UnexpectedResidualForm)
-                }
-                ResidualKind::ExtensionFunctionApp { .. } => {
-                    return Err(EarlyEvaluationError::UnexpectedResidualForm)
-                }
-                ResidualKind::Var(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-                ResidualKind::Record(_) => {
-                    return Err(EarlyEvaluationError::UnexpectedResidualForm)
-                }
-                ResidualKind::Set(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                ast::BinaryOp::Add => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                ast::BinaryOp::Mul => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                ast::BinaryOp::Sub => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+                ast::BinaryOp::GetTag => return Err(EarlyEvaluationError::UnexpectedResidualForm),
             },
-            Residual::Concrete { value, .. } => match value.value_kind() {
-                ast::ValueKind::Lit(ast::Literal::Bool(true)) => Some(true),
-                ast::ValueKind::Lit(ast::Literal::Bool(false)) => Some(false),
-                _ => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+            ResidualKind::UnaryApp { op, arg } => match op {
+                ast::UnaryOp::Not => match residual_bool_value_ignoring_potential_errors(arg)? {
+                    Some(true) => Some(false),
+                    Some(false) => Some(true),
+                    None => None,
+                },
+                ast::UnaryOp::IsEmpty => None,
+                // Non-boolean return values error; this function should only be called on boolean-typed residuals
+                ast::UnaryOp::Neg => return Err(EarlyEvaluationError::UnexpectedResidualForm),
             },
-            Residual::Error(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
-        })
-    }
-}
 
-impl AsRef<Residual> for FoldedResidual {
-    fn as_ref(&self) -> &Residual {
-        &self.residual
-    }
+            // Non-boolean return values error; this function should only be called on boolean-typed residuals
+            ResidualKind::GetAttr { .. } => {
+                return Err(EarlyEvaluationError::UnexpectedResidualForm)
+            }
+            ResidualKind::ExtensionFunctionApp { .. } => {
+                return Err(EarlyEvaluationError::UnexpectedResidualForm)
+            }
+            ResidualKind::Var(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+            ResidualKind::Record(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+            ResidualKind::Set(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+        },
+        Residual::Concrete { value, .. } => match value.value_kind() {
+            ast::ValueKind::Lit(ast::Literal::Bool(true)) => Some(true),
+            ast::ValueKind::Lit(ast::Literal::Bool(false)) => Some(false),
+            _ => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+        },
+        Residual::Error(_) => return Err(EarlyEvaluationError::UnexpectedResidualForm),
+    })
 }

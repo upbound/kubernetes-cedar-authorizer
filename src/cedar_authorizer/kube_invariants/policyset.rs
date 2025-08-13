@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -13,12 +13,10 @@ use cedar_policy_core::{
     },
     validator::RawName,
 };
-use serde::{Deserialize, Serialize};
-use smol_str::SmolStr;
 
 use super::{
     err::{EarlyEvaluationError, SchemaError},
-    residual::{FoldedResidual, PartialResponseNew},
+    residual::PartialResponseNew,
 };
 
 use itertools::Itertools;
@@ -310,107 +308,34 @@ impl PolicySet {
             .merge_policyset(other.as_ref(), rename_duplicates)
     }
 
-    pub fn tpe(
-        &self,
-        request: &PartialRequest,
-        entities: &PartialEntities,
-    ) -> Result<PartialResponseNew, EarlyEvaluationError> {
-        /*println!("policies: {}", &self.policies);
-        println!("request: {request:?}");
-        for entity in entities.entities() {
-            debug_entity(entity.clone());
-        }*/
-        use cedar_policy_core::tpe::tpe_policies;
-        let res = tpe_policies(
+    pub fn tpe<'a>(
+        &'a self,
+        request: &'a PartialRequest,
+        entities: &'a PartialEntities,
+    ) -> Result<PartialResponseNew<'a>, EarlyEvaluationError> {
+        use cedar_policy_core::tpe::is_authorized;
+        let res: cedar_policy_core::tpe::response::Response<'a> = is_authorized(
             &self.policies,
             request,
             entities,
             self.schema.as_ref().as_ref(),
         )?;
-        // dbg!(&res);
 
-        let mut true_permits = vec![];
-        let mut true_forbids = vec![];
-        let mut residual_permits = HashMap::new();
-        let mut residual_forbids = HashMap::new();
-        let mut errors = HashMap::new();
-
-        for (id, residual) in res {
-            let p = self.policies.get(&id).unwrap();
-
-            match (p.effect(), &residual) {
-                (
-                    ast::Effect::Permit,
-                    Residual::Concrete {
-                        value:
-                            ast::Value {
-                                value: ast::ValueKind::Lit(ast::Literal::Bool(true)),
-                                ..
-                            },
-                        ..
-                    },
-                ) => {
-                    true_permits.push(id);
-                }
-
-                (ast::Effect::Permit, Residual::Partial { .. }) => {
-                    residual_permits.insert(id, FoldedResidual::new(residual)?);
-                }
-                (
-                    ast::Effect::Forbid,
-                    Residual::Concrete {
-                        value:
-                            ast::Value {
-                                value: ast::ValueKind::Lit(ast::Literal::Bool(true)),
-                                ..
-                            },
-                        ..
-                    },
-                ) => {
-                    true_forbids.push(id);
-                }
-
-                (ast::Effect::Forbid, Residual::Partial { .. }) => {
-                    // Cedar policies (both permit and forbid) are skipped if they error, so we make sure
-                    // that forbid errors are impossible, so we can fold e.g. <residual> || true into true.
-                    // For our use-case, we should enforce this already at policy submission stage, but here
-                    // is a late check just in case for the general case.
-                    residual_forbids.insert(id, FoldedResidual::new(residual)?);
-                }
-                (
-                    _,
-                    Residual::Concrete {
-                        value:
-                            ast::Value {
-                                value: ast::ValueKind::Lit(ast::Literal::Bool(false)),
-                                ..
-                            },
-                        ..
-                    },
-                ) => (), // Ignore false values for now
-                // We expect only concrete values that are either true or false, regardless of effect
-                (_, Residual::Concrete { .. }) => {
-                    return Err(EarlyEvaluationError::UnexpectedResidualForm); // TODO: Add a better error message here
-                }
-                // INVARIANT: We should validate the forbid policy to not be able to error, so this shouldn't happen.
-                (ast::Effect::Forbid, Residual::Error(_)) => {
-                    return Err(EarlyEvaluationError::PolicyCouldError(id));
-                }
-                // For now, ignore permit errors (e.g. from arithmetic overflows)
-                // TODO: We'd want a better error type here, e.g. https://docs.rs/cedar-policy/latest/cedar_policy/enum.EvaluationError.html
-                (ast::Effect::Permit, Residual::Error(ty)) => {
-                    errors.insert(id, ty.clone());
-                }
-            }
+        // TODO: Add res.is_error() instead of this matches!()
+        let erroring_forbids = res
+            .non_trival_forbids()
+            .filter(|id| matches!(res.get_residual(id).unwrap(), Residual::Error(_)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if erroring_forbids.len() > 0 {
+            return Err(EarlyEvaluationError::PolicyCouldError(erroring_forbids));
         }
+
+        // TODO: Surface erroring allow policies better.
 
         Ok(PartialResponseNew {
             schema: self.schema.clone(),
-            true_permits,
-            residual_permits,
-            true_forbids,
-            residual_forbids,
-            errors,
+            tpe_response: res,
         })
     }
 }

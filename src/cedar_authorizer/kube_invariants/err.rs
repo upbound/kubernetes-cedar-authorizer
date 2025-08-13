@@ -17,14 +17,16 @@ pub enum SchemaError {
     IsK8sResourceDisallowed(ast::PolicyID),
     #[error("Policy {0} is not static, only static policies are allowed for now")]
     PolicyIsNotStatic(ast::PolicyID),
+    #[error(transparent)]
+    EarlyEvaluationError(#[from] EarlyEvaluationError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum EarlyEvaluationError {
     #[error("Unexpected residual form")]
     UnexpectedResidualForm,
-    #[error("Policy could error, although not allowed to: {0}")]
-    PolicyCouldError(ast::PolicyID),
+    #[error("Policies could error, although not allowed to: {0:?}")]
+    PolicyCouldError(Vec<ast::PolicyID>),
     #[error("TPE error: {0}")]
     TPEError(#[from] TPEError),
 }
