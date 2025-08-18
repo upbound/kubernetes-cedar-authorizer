@@ -8,6 +8,7 @@ use kube::{discovery::ApiGroup, runtime::reflector, runtime::watcher};
 
 use futures_util::{future::ready, StreamExt};
 use kube::runtime::WatchStreamExt;
+use tokio_util::sync::CancellationToken;
 
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
@@ -20,7 +21,7 @@ where
     fn get(&self, key: &reflector::ObjectRef<K>) -> Option<Arc<K>>;
 }
 
-struct KubeStoreImpl<K: 'static + Clone + reflector::Lookup>
+pub struct KubeStoreImpl<K: 'static + Clone + reflector::Lookup>
 where
     K::DynamicType: Eq + Hash + Clone + Default,
 {
@@ -49,26 +50,21 @@ impl<
 where
     <K as reflector::Lookup>::DynamicType: Eq + Hash + Clone + Default + Send + Sync,
 {
-    pub fn new(obj_client: kube::Api<K>) -> Self {
-        let lp = watcher::Config::default();
+    pub fn new(obj_client: kube::Api<K>, token: CancellationToken) -> Self {
         let (store, writer) = reflector::store();
-        let rf = reflector(writer, watcher(obj_client, lp));
-
-        thread::spawn(async move || {
-            let infinite_watch = rf.applied_objects().for_each(|_| ready(()));
-            infinite_watch.await;
+        
+        tokio::spawn(async move {
+            let obj_watcher = watcher(obj_client, watcher::Config::default())
+            .take_until(token.cancelled());
+            reflector(writer, obj_watcher)
+            .applied_objects().for_each(|_| ready(())).await;
         });
 
         Self { store }
     }
-
-    /*pub fn watch_updates_blocking_indefinitely(&self) {
-        let infinite_watch = self.store.applied_objects().for_each(|o| { ready(()) });
-        infinite_watch.await;
-    }*/
 }
 
-pub(super) struct TestKubeStore<K: 'static + Clone + reflector::Lookup>
+pub struct TestKubeStore<K: 'static + Clone + reflector::Lookup>
 where
     K::DynamicType: Eq + Hash + Clone + Default,
 {

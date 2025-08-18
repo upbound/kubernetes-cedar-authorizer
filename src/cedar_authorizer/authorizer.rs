@@ -36,29 +36,23 @@ const API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse(
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> {
+pub struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>> {
     policies: kube_invariants::PolicySet,
     namespaces: S,
-    discovery: D,
-
-    _phantom: PhantomData<G>,
     // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
-    CedarKubeAuthorizer<S, G, D>
+impl<'a, S: KubeStore<corev1::Namespace>>
+    CedarKubeAuthorizer<S>
 {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
     pub fn new(
         policies: kube_invariants::PolicySet,
         namespaces: S,
-        discovery: D,
     ) -> Result<Self, SchemaError> {
         Ok(Self {
             policies,
             namespaces,
-            discovery,
-            _phantom: PhantomData,
         })
     }
 
@@ -408,8 +402,8 @@ impl<'a, S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>>
     }
 }
 
-impl<S: KubeStore<corev1::Namespace>, G: KubeApiGroup, D: KubeDiscovery<G>> KubernetesAuthorizer
-    for CedarKubeAuthorizer<S, G, D>
+impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
+    for CedarKubeAuthorizer<S>
 {
     fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
@@ -706,12 +700,13 @@ mod test {
                 .unwrap();
 
         let authorizer =
-            super::CedarKubeAuthorizer::new(policies, namespace_store, discovery).unwrap();
+            super::CedarKubeAuthorizer::new(policies, namespace_store).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
             ("superadmin can do anything on any verb", 
             AttributesBuilder::resource("superadmin", Verb::Any,
+                    StarWildcardStringSelector::Any,
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
@@ -720,12 +715,14 @@ mod test {
             ("admin can't do anything on any verb, as they are forbidden to get in the supersecret namespace",
             AttributesBuilder::resource("admin", Verb::Any,
                     StarWildcardStringSelector::Any,
+                    StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
             ("admin can't do anything on the get verb, as they are forbidden to get in the supersecret namespace",
             AttributesBuilder::resource("admin", Verb::Get,
+                    StarWildcardStringSelector::Any,
                     StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
@@ -734,6 +731,7 @@ mod test {
             ("serviceaccount can get serviceaccounts in its own namespace",
             AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
@@ -741,6 +739,7 @@ mod test {
             ("serviceaccount can get serviceaccounts in its own namespace, but through a field selector",
             AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any,
@@ -751,6 +750,7 @@ mod test {
             ("serviceaccount can get serviceaccounts in its own namespace, but not in the supersecret namespace",
             AttributesBuilder::resource("system:serviceaccount:supersecret:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("supersecret".to_string()),
                     EmptyWildcardStringSelector::Any)
@@ -758,6 +758,7 @@ mod test {
             ("serviceaccount can get serviceaccounts in a namespace which does not have the label",
             AttributesBuilder::resource("system:serviceaccount:bar:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
                     EmptyWildcardStringSelector::Exact("bar".to_string()),
                     EmptyWildcardStringSelector::Any)
@@ -781,6 +782,7 @@ mod test {
             ("a node can only get its own node object",
             AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "nodes".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-1".to_string()))
@@ -788,6 +790,7 @@ mod test {
             ("a node cannot get other nodes",
             AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "nodes".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-2".to_string()))
@@ -795,6 +798,7 @@ mod test {
             ("a node can get pods in the foo namespace",
             AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Exact("pod-abc".to_string()))
@@ -808,6 +812,7 @@ mod test {
             ("lucas can get pods in the foo namespace",
             AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
@@ -816,6 +821,7 @@ mod test {
             ("lucas should not be able to get pods in all namespaces (no opinion expected, NOT conditional)",
             AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::Any,
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
@@ -823,6 +829,7 @@ mod test {
                 .build(), Response::no_opinion()),
             ("user should not be able to get resource foo across all API groups when resource.apiGroup='*'",
             AttributesBuilder::resource("explicitwildcardshouldfail", Verb::Get,
+                    StarWildcardStringSelector::Any,
                     StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "foo".to_string() },
                     // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
@@ -832,6 +839,7 @@ mod test {
             ("user should be able to get resource foo across all API groups when resource.apiGroup is omitted",
             AttributesBuilder::resource("omittedconditionok", Verb::Get,
                     StarWildcardStringSelector::Any,
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "foo".to_string() },
                     // Note: There is one forbid policy which disallows access to the supersecret namespace, so hence this operates on a dedicated namespace, and not any.
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
@@ -840,6 +848,7 @@ mod test {
             ("singleitemwatch can watch pod bar in the foo namespace",
             AttributesBuilder::resource_and_selectors("singleitemwatch", Verb::Watch,
                     StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any,
@@ -853,6 +862,7 @@ mod test {
                 ("singleitemwatch cannot get pod bar in the foo namespace, as the authorization was only for the watch verb",
                 AttributesBuilder::resource_and_selectors("singleitemwatch", Verb::Get,
                         StarWildcardStringSelector::Exact("".to_string()),
+                        StarWildcardStringSelector::Any,
                         CombinedResource::ResourceOnly { resource: "pods".to_string() },
                         EmptyWildcardStringSelector::Any,
                         EmptyWildcardStringSelector::Any,

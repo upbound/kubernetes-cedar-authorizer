@@ -26,13 +26,22 @@ pub enum AuthorizerError {
     UnexpectedSchemaShape(String),
 }
 
+impl axum::response::IntoResponse for AuthorizerError {
+    fn into_response(self) -> axum::response::Response {
+        axum::response::Response::builder()
+            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::from(self.to_string()))
+            .unwrap()
+    }
+}
+
 // pub type Result<T> = std::result::Result<T, AuthorizerError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("invalid verb '{0}': {1}")]
     InvalidVerb(String, String),
-    #[error("invalid value selector (where wildcard is donated by *) '{0}': {1}")]
+    #[error("invalid value selector (where wildcard is denoted by *) '{0}': {1}")]
     InvalidStarWildcardSelector(String, String),
     #[error("invalid resource '{0}': {1}")]
     InvalidResource(String, String),

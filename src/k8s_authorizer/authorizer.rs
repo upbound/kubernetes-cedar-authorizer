@@ -4,6 +4,7 @@ use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStri
 
 use super::err::ParseError;
 use crate::cedar_authorizer::kube_invariants;
+use cedar_policy_symcc::type_abbrevs::Attr;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;
 
 use super::attributes::{Attributes, ResourceAttributes, UserInfo, Verb};
@@ -144,6 +145,12 @@ impl Display for Decision {
     }
 }
 
+impl Attributes {
+    pub fn from_subject_access_review(value: &SubjectAccessReview) -> Result<Self, ParseError> {
+        Self::try_from(value.clone())
+    }
+}
+
 impl TryFrom<SubjectAccessReview> for Attributes {
     type Error = ParseError;
     fn try_from(value: SubjectAccessReview) -> Result<Self, Self::Error> {
@@ -168,7 +175,13 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                         resource: resource_attrs.resource.unwrap_or_default().parse()?,
                         name: resource_attrs.name.unwrap_or_default().parse()?,
                         api_group: resource_attrs.group.unwrap_or_default().parse()?,
-                        // api_version: resource_attrs.version.unwrap_or_default().parse()?,
+                        api_version: match resource_attrs.version.unwrap_or_default().parse()? {
+                            StarWildcardStringSelector::Exact(s) => match s.as_str() {
+                                "" => StarWildcardStringSelector::Any, // Fold apiVersion="" into apiVersion="*"
+                                _ => StarWildcardStringSelector::Exact(s),
+                            },
+                            StarWildcardStringSelector::Any => StarWildcardStringSelector::Any,
+                        },
                         field_selector: match (
                             verb.supports_selectors(),
                             resource_attrs.field_selector,

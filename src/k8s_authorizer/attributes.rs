@@ -135,10 +135,6 @@ impl FromStr for StarWildcardStringSelector {
     type Err = ParseError;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "" => Err(ParseError::InvalidStarWildcardSelector(
-                s.to_string(),
-                "cannot be empty".to_string(),
-            )),
             "*" => Ok(StarWildcardStringSelector::Any),
             // TODO: Require that the string is lowercase ascii, does not have spaces, and is at most 255 characters, or something similar.
             _ => Ok(StarWildcardStringSelector::Exact(s.to_string())),
@@ -302,7 +298,9 @@ pub struct ResourceAttributes {
 
     // api_version returns the version of the group requested, if a request is for a REST object.
     // "*" means all.
-    // pub api_version: StarWildcardStringSelector,
+    // TODO: We could use this to determine which API version is available, in case we do not want to type-check against
+    // all versions of the resource, or only the storage one.
+    pub api_version: StarWildcardStringSelector,
 
     // ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
     // It returns an error if the field selector cannot be parsed.

@@ -31,12 +31,13 @@ impl AttributesBuilder {
         username: &str,
         verb: Verb,
         api_group: StarWildcardStringSelector,
+        api_version: StarWildcardStringSelector,
         resource: CombinedResource,
         namespace: EmptyWildcardStringSelector,
         name: EmptyWildcardStringSelector,
     ) -> Self {
         Self::resource_and_selectors(
-            username, verb, api_group, resource, namespace, name, None, None,
+            username, verb, api_group, api_version, resource, namespace, name, None, None,
         )
     }
 
@@ -44,6 +45,7 @@ impl AttributesBuilder {
         username: &str,
         verb: Verb,
         api_group: StarWildcardStringSelector,
+        api_version: StarWildcardStringSelector,
         resource: CombinedResource,
         namespace: EmptyWildcardStringSelector,
         name: EmptyWildcardStringSelector,
@@ -64,6 +66,7 @@ impl AttributesBuilder {
                     resource,
                     name,
                     api_group,
+                    api_version,
                     field_selector,
                     label_selector,
                 }),
