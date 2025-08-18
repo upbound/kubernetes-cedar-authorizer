@@ -248,7 +248,7 @@ pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawNa
         make_stringmap_type((&TypeWrapper::Set(Box::new(TypeWrapper::String))).into()).unwrap()
     });
 
-pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
+pub static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
     name: CedarTypeName::new(META_NS.clone(), "V1ObjectMeta").unwrap(),
     attrs: BTreeMap::from([
         // TODO: Change these to be simpler with the bare minimal things needed.

@@ -3,7 +3,6 @@ use k8s_openapi::api::core::v1 as corev1;
 use kube;
 use kube::runtime::reflector;
 use std::collections::HashSet;
-use std::marker::PhantomData;
 use std::sync::LazyLock;
 
 use cedar_policy_core::tpe::entities::PartialEntities;
@@ -27,7 +26,7 @@ use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
-use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder};
+use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilderImpl, RecordBuilder};
 use super::kube_invariants::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
@@ -86,7 +85,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                 ));
             }
 
-            entity_builder.add_entity_attr("namespace", Some(self.namespace_entity(parts[0])?));
+            entity_builder.add_attr("namespace", Some(self.namespace_entity(parts[0])?));
             entity_builder.add_attr("name", Some(parts[1]));
 
             // TODO: Add the namespace anchestor.
@@ -117,17 +116,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
         Ok(EntityBuilder::new()
             .with_eid(ns_uid)
             .with_attr("name", Some(ns_name))
-            .with_record_attr(
-                "metadata",
-                Some(
-                    RecordBuilder::new()
-                        .with_string_to_string_map("labels", ns.metadata.labels.as_ref())
-                        .with_string_to_string_map("annotations", ns.metadata.annotations.as_ref())
-                        .with_string_set("finalizers", ns.metadata.finalizers.clone())
-                        .with_attr("uid", Some(ns_uid.as_str()))
-                        .with_attr("deleted", Some(ns.metadata.deletion_timestamp.is_some())),
-                ),
-            )
+            .with_metadata(&ns.metadata)
             .build(ENTITY_NAMESPACE.name.name()))
     }
 
@@ -138,7 +127,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
         match &attrs.request_type {
             RequestType::NonResource(nonresource_attrs) => Ok((
                 EntityBuilder::new()
-                    .with_entity_attr(
+                    .with_attr(
                         "path",
                         Some(EntityBuilder::unknown_string(
                             match nonresource_attrs.path {
@@ -152,7 +141,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             )),
             RequestType::Resource(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()
-                    .with_entity_attr(
+                    .with_attr(
                         "apiGroup",
                         Some(EntityBuilder::unknown_string(
                             match resource_attrs.api_group {
@@ -161,14 +150,14 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                             },
                         )),
                     )
-                    .with_entity_attr(
+                    .with_attr(
                         "name",
                         Some(EntityBuilder::unknown_string(match resource_attrs.name {
                             EmptyWildcardStringSelector::Any => None,
                             _ => Some(resource_attrs.name.to_string()),
                         })),
                     )
-                    .with_entity_attr(
+                    .with_attr(
                         "resourceCombined",
                         Some(EntityBuilder::unknown_string(
                             match resource_attrs.resource {
@@ -191,7 +180,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                     {
                         Some((entity_type, resource_type)) => {
                             let record = entity_to_record(&resource_type)?;
-                            resource_builder.add_entity_attr(
+                            resource_builder.add_attr(
                                 "namespace",
                                 match &resource_attrs.namespace {
                                     EmptyWildcardStringSelector::Any => {
@@ -210,7 +199,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                                 },
                             );
 
-                            resource_builder.add_entity_attr(
+                            resource_builder.add_attr(
                                 "request",
                                 match record.attributes.get("request") {
                                     Some(schema_request_attr) => match attrs.verb {
@@ -220,6 +209,8 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                                         | Verb::Update
                                         | Verb::Patch
                                         | Verb::Connect => {
+                                            // TODO: Actually make this known, and populate the apiVersion & kind fields
+                                            // Keep metadata unknown, but also only populate one of the versioned fields.
                                             Some(EntityBuilder::build_unknown_internal_name(
                                                 entity_ref_of_type(
                                                     &schema_request_attr.ty,
@@ -235,7 +226,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                                 },
                             );
 
-                            resource_builder.add_entity_attr(
+                            resource_builder.add_attr(
                                 "stored",
                                 match record.attributes.get("stored") {
                                     Some(schema_request_attr) => match attrs.verb {
@@ -243,6 +234,8 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                                         // carry request data.
                                         // TODO: Do we get any stored data for connect verbs?
                                         // TODO: Should we allow arbitrary verbs to operate conditionally?
+                                        // TODO: Actually make this known, and populate the apiVersion & kind fields
+                                        // Keep metadata unknown, but also only populate one of the versioned fields.
                                         Verb::Get
                                         | Verb::List
                                         | Verb::Watch
@@ -287,7 +280,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
     ) -> Result<(BuiltEntity, bool), AuthorizerError> {
         Ok((
             resource_builder
-                .with_entity_attr(
+                .with_attr(
                     "namespace",
                     match &resource_attrs.namespace {
                         // Here we must assume that the namespace is "any",
@@ -807,7 +800,7 @@ mod test {
   action,
   resource
 ) when {
-  (((core::VersionedPod::"3c0edf18-ae66-48ca-8309-4f2f94c5d4ae" has "v1") && ((core::VersionedPod::"3c0edf18-ae66-48ca-8309-4f2f94c5d4ae"["v1"]) has "spec")) && ((((core::VersionedPod::"3c0edf18-ae66-48ca-8309-4f2f94c5d4ae"["v1"])["spec"])["nodeName"]) == "node-1"))
+  (((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf" has "v1") && ((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf"["v1"]) has "spec")) && ((((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf"["v1"])["spec"])["nodeName"]) == "node-1"))
 };"#, Arc::new(schema.clone())).unwrap())),
             ("lucas can get pods in the foo namespace",
             AttributesBuilder::resource("lucas", Verb::Get,

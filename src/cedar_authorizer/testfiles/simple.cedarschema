@@ -40,31 +40,31 @@ namespace k8s {
 
   action "*" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
   };
 
   action "create" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
   };
 
   action "get" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
   };
 
   action "list" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
   };
 
   action "watch" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
   };
 }
@@ -132,6 +132,27 @@ namespace core {
     // lots of fields
   };
 
+  entity secrets = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "secrets"
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedSecret,
+    "stored"?: core::VersionedSecret
+  };
+  entity VersionedSecret = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "metadata": meta::V1ObjectMeta,
+    "v1"?: core::V1Secret
+  };
+  type V1Secret = {
+    "type": __cedar::String,
+    "data"?: meta::StringToStringMap,
+    "stringData"?: meta::StringToStringMap,
+    "immutable": __cedar::Bool,
+  };
+
   entity pods_status = {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "pods/status"
@@ -161,7 +182,7 @@ namespace meta {
     "keys": Set<__cedar::String>
   } tags Set<__cedar::String>;
 
-  type V1ObjectMeta = {
+  entity V1ObjectMeta = {
     "annotations": meta::StringToStringMap,
     "deleted": __cedar::Bool,
     "finalizers": Set<__cedar::String>,

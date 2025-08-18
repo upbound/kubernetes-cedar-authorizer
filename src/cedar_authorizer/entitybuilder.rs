@@ -8,8 +8,9 @@ use cedar_policy_core::{
 };
 use smol_str::{SmolStr, ToSmolStr};
 use uuid::Uuid;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 
-use crate::schema::core::{MAP_STRINGSTRING, MAP_STRINGSTRINGSET};
+use crate::schema::core::{MAP_STRINGSTRING, MAP_STRINGSTRINGSET, TYPE_OBJECTMETA};
 
 #[cfg(test)]
 static TEST_RNG: LazyLock<Mutex<rand::rngs::StdRng>> = LazyLock::new(|| {
@@ -35,14 +36,14 @@ pub fn new_uuid() -> Uuid {
 pub(super) struct EntityBuilder {
     entity_eid: Option<Eid>,
     entity_tags: Option<BTreeMap<SmolStr, Value>>,
-    record_builder: RecordBuilder,
+    record_builder: RecordBuilderImpl,
 }
 
 impl EntityBuilder {
     pub(super) fn new() -> Self {
         Self {
             entity_eid: None,
-            record_builder: RecordBuilder::new(),
+            record_builder: RecordBuilderImpl::new(),
             entity_tags: None,
         }
     }
@@ -67,115 +68,6 @@ impl EntityBuilder {
     pub(super) fn with_tags(mut self, tags: BTreeMap<SmolStr, Value>) -> Self {
         self.entity_tags = Some(tags);
         self
-    }
-
-    // TODO: De-duplicate these with the RecordBuilder methods, e.g. through a trait.
-    #[must_use]
-    pub(super) fn with_attr<K: Into<SmolStr>, V: Into<Value>>(
-        mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) -> Self {
-        self.add_attr(key, optional_value);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_entity_attr<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        optional_built: Option<BuiltEntity>,
-    ) -> Self {
-        self.add_entity_attr(key, optional_built);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_to_string_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, String>>,
-    ) -> Self {
-        self.add_string_to_string_map(key, map);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_to_stringset_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, Vec<String>>>,
-    ) -> Self {
-        self.add_string_to_stringset_map(key, map);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_set<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        set: Option<impl IntoIterator<Item = String>>,
-    ) -> Self {
-        self.add_string_set(key, set);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_record_attr<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        record: Option<RecordBuilder>,
-    ) -> Self {
-        self.add_record_attr(key, record);
-        self
-    }
-
-    pub(super) fn add_attr<K: Into<SmolStr>, V: Into<Value>>(
-        &mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) {
-        self.record_builder.add_attr(key, optional_value);
-    }
-
-    pub(super) fn add_entity_attr<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        optional_built: Option<BuiltEntity>,
-    ) {
-        self.record_builder.add_entity_attr(key, optional_built);
-    }
-
-    pub(super) fn add_string_to_string_map<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        map: Option<&BTreeMap<String, String>>,
-    ) {
-        self.record_builder.add_string_to_string_map(key, map);
-    }
-
-    pub(super) fn add_string_to_stringset_map<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        map: Option<&BTreeMap<String, Vec<String>>>,
-    ) {
-        self.record_builder.add_string_to_stringset_map(key, map);
-    }
-
-    pub(super) fn add_string_set<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        set: Option<impl IntoIterator<Item = String>>,
-    ) {
-        self.record_builder.add_string_set(key, set);
-    }
-
-    pub(super) fn add_record_attr<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        record: Option<RecordBuilder>,
-    ) {
-        self.record_builder.add_record_attr(key, record);
     }
 
     pub(super) fn build_unknown(entity_type_name: Name) -> BuiltEntity {
@@ -217,122 +109,36 @@ impl EntityBuilder {
         }
     }
 }
-
-pub(super) struct RecordBuilder {
-    entity_attrs: Option<BTreeMap<SmolStr, Value>>,
-    entities: HashMap<EntityUID, PartialEntity>,
+impl RecordBuilder for EntityBuilder {
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
+        &mut self,
+        key: K,
+        optional_value: Option<V>,
+    ) {
+        self.record_builder.add_attr(key, optional_value);
+    }
 }
 
-impl RecordBuilder {
-    pub(super) fn new() -> Self {
-        Self {
-            entity_attrs: None,
-            entities: HashMap::new(),
-        }
-    }
+pub trait IntoValueWithEntities {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>);
+}
 
-    #[must_use]
-    pub(super) fn with_attr<K: Into<SmolStr>, V: Into<Value>>(
-        mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) -> Self {
-        self.add_attr(key, optional_value);
-        self
+impl<T: Into<Value>> IntoValueWithEntities for T {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
+        (self.into(), std::iter::empty())
     }
+}
 
-    #[must_use]
-    pub(super) fn with_entity_attr<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        optional_built: Option<BuiltEntity>,
-    ) -> Self {
-        self.add_entity_attr(key, optional_built);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_to_string_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, String>>,
-    ) -> Self {
-        self.add_string_to_string_map(key, map);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_to_stringset_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, Vec<String>>>,
-    ) -> Self {
-        self.add_string_to_stringset_map(key, map);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_string_set<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        set: Option<impl IntoIterator<Item = String>>,
-    ) -> Self {
-        self.add_string_set(key, set);
-        self
-    }
-
-    #[must_use]
-    pub(super) fn with_record_attr<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        record: Option<RecordBuilder>,
-    ) -> Self {
-        self.add_record_attr(key, record);
-        self
-    }
-
-    pub(super) fn add_attr<K: Into<SmolStr>, V: Into<Value>>(
+pub trait RecordBuilder: Sized {
+    /// Adds an attribute to the record being built, if Some(value).
+    /// Any entities associated with the value are added to the record builder.
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
         &mut self,
         key: K,
         optional_value: Option<V>,
-    ) {
-        if let Some(value) = optional_value {
-            self.entity_attrs
-                .get_or_insert(BTreeMap::new())
-                .insert(key.into(), value.into());
-        }
-    }
+    );
 
-    pub(super) fn add_entity_attr<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        optional_built: Option<BuiltEntity>,
-    ) {
-        if let Some(built) = optional_built {
-            // TODO: This overwrites any existing entities with the same UID, if present, but
-            // should not be a problem as long as we use the same constructor functions for entities
-            // that might be built several times. Namespace between ServiceAccount and k8s::Resource is an example.
-            self.entities.extend(built.entities);
-            self.add_attr(key, Some(built.uid));
-        }
-    }
-
-    pub(super) fn add_record_attr<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        optional_record: Option<RecordBuilder>,
-    ) {
-        if let Some(record) = optional_record {
-            // Add any entities generated by the record builder to the current record builder.
-            self.entities.extend(record.entities);
-            self.add_attr(
-                key,
-                Some(Value::record(record.entity_attrs.unwrap_or_default(), None)),
-            );
-        }
-    }
-
-    pub(super) fn add_string_to_string_map<K: Into<SmolStr>>(
+    fn add_string_to_string_map<K: Into<SmolStr>>(
         &mut self,
         key: K,
         map_option: Option<&BTreeMap<String, String>>,
@@ -342,7 +148,7 @@ impl RecordBuilder {
             Some(map) => map.clone(),
             None => BTreeMap::new(),
         };
-        self.add_entity_attr(
+        self.add_attr(
             key,
             Some(
                 EntityBuilder::new()
@@ -353,7 +159,7 @@ impl RecordBuilder {
         );
     }
 
-    pub(super) fn add_string_to_stringset_map<K: Into<SmolStr>>(
+    fn add_string_to_stringset_map<K: Into<SmolStr>>(
         &mut self,
         key: K,
         map_option: Option<&BTreeMap<String, Vec<String>>>,
@@ -363,12 +169,12 @@ impl RecordBuilder {
             Some(map) => map.clone(),
             None => BTreeMap::new(),
         };
-        self.add_entity_attr(
+        self.add_attr(
             key,
             Some(
                 EntityBuilder::new()
                     .with_string_set("keys", Some(map.keys().cloned()))
-                    .with_tags(
+                    .with_tags( // TODO: If only one value, add a "first" attribute to the entity.
                         map.into_iter()
                             .map(|(k, v)| {
                                 (
@@ -383,7 +189,7 @@ impl RecordBuilder {
         );
     }
 
-    pub(super) fn add_string_set<K: Into<SmolStr>, V: IntoIterator<Item = String>>(
+    fn add_string_set<K: Into<SmolStr>, V: IntoIterator<Item = String>>(
         &mut self,
         key: K,
         set_option: Option<V>,
@@ -395,11 +201,117 @@ impl RecordBuilder {
         };
         self.add_attr(key, Some(Value::set_of_lits(set, None)));
     }
+
+    fn add_metadata(&mut self, metadata: &metav1::ObjectMeta) {
+        self.add_attr(
+            "metadata",
+            Some(
+                EntityBuilder::new()
+                    .with_string_to_string_map("labels", metadata.labels.as_ref())
+                    .with_string_to_string_map("annotations", metadata.annotations.as_ref())
+                    .with_string_set("finalizers", metadata.finalizers.clone())
+                    .with_attr("uid", metadata.uid.clone())
+                    .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
+                    .build(TYPE_OBJECTMETA.name.name()),
+            ),
+        );
+    }
+
+    #[must_use]
+    fn with_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
+        mut self,
+        key: K,
+        optional_value: Option<V>,
+    ) -> Self {
+        self.add_attr(key, optional_value);
+        self
+    }
+
+    #[must_use]
+    fn with_string_to_string_map<K: Into<SmolStr>>(
+        mut self,
+        key: K,
+        map: Option<&BTreeMap<String, String>>,
+    ) -> Self {
+        self.add_string_to_string_map(key, map);
+        self
+    }
+
+    #[must_use]
+    fn with_string_to_stringset_map<K: Into<SmolStr>>(
+        mut self,
+        key: K,
+        map: Option<&BTreeMap<String, Vec<String>>>,
+    ) -> Self {
+        self.add_string_to_stringset_map(key, map);
+        self
+    }
+
+    #[must_use]
+    fn with_string_set<K: Into<SmolStr>>(
+        mut self,
+        key: K,
+        set: Option<impl IntoIterator<Item = String>>,
+    ) -> Self {
+        self.add_string_set(key, set);
+        self
+    }
+
+    #[must_use]
+    fn with_metadata(mut self, metadata: &metav1::ObjectMeta) -> Self {
+        self.add_metadata(metadata);
+        self
+    }
+}
+
+pub(super) struct RecordBuilderImpl {
+    entity_attrs: Option<BTreeMap<SmolStr, Value>>,
+    entities: HashMap<EntityUID, PartialEntity>,
+}
+
+impl RecordBuilder for RecordBuilderImpl {
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
+        &mut self,
+        key: K,
+        optional_value: Option<V>,
+    ) {
+        if let Some(v) = optional_value {
+            let (value, entities) = v.into_value_with_entities();
+            // TODO: This overwrites any existing entities with the same UID, if present, but
+            // should not be a problem as long as we use the same constructor functions for entities
+            // that might be built several times. Namespace between ServiceAccount and k8s::Resource is an example.
+            self.entities.extend(entities);
+            self.entity_attrs
+                .get_or_insert(BTreeMap::new())
+                .insert(key.into(), value.into());
+        }
+    }
+}
+
+impl IntoValueWithEntities for RecordBuilderImpl {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
+        (Value::record(self.entity_attrs.unwrap_or_default(), None), self.entities.into_iter())
+    }
+}
+
+impl RecordBuilderImpl {
+    pub(super) fn new() -> Self {
+        Self {
+            entity_attrs: None,
+            entities: HashMap::new(),
+        }
+    }
 }
 
 pub(super) struct BuiltEntity {
     uid: EntityUID,
     entities: HashMap<EntityUID, PartialEntity>,
+}
+
+impl IntoValueWithEntities for BuiltEntity {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
+        (self.uid.into(), self.entities.into_iter())
+    }
 }
 
 impl BuiltEntity {
