@@ -44,7 +44,7 @@ permit (
 when
 {
     resource.apiGroup == "" &&
-    resource.resourceCombined == "serviceaccounts" &&
+    resource.resourceCombined == "pods" &&
     resource has namespace &&
     resource.namespace == principal.namespace &&
     resource.namespace.metadata.labels.hasTag("serviceaccounts-allowed") &&
@@ -63,7 +63,7 @@ permit (
     action,
     resource
 )
-when { principal.groups.contains("lucas") && resource has namespace && resource.namespace.name == "foo" };
+when { principal.groups.contains("lucas") && resource has namespace && resource.namespace.name == "notinstorage" };
 
 permit (
     principal is k8s::User,
@@ -84,7 +84,7 @@ permit (
     action == k8s::Action::"watch",
     resource
 )
-when { principal.username == "singleitemwatch" && resource has namespace &&resource.namespace.name == "foo" && resource.name == "bar" };
+when { principal.username == "singleitemwatch" && resource has namespace && resource.namespace.name == "foo" && resource.name == "bar" };
 
 
 permit (

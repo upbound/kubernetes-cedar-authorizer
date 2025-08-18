@@ -184,7 +184,7 @@ pub(crate) static ENTITY_NAMESPACE: LazyLock<EntityWrapper> = LazyLock::new(|| E
         ("name".into(), TypeWrapper::String.required()),
         (
             "metadata".into(),
-            TypeWrapper::CommonRef(TYPE_OBJECTMETA.name.full_name()).required(),
+            TypeWrapper::CommonRef(ENTITY_OBJECTMETA.name.full_name()).required(),
         ),
     ]),
     kind: TypeKind::EntityType {
@@ -248,7 +248,7 @@ pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawNa
         make_stringmap_type((&TypeWrapper::Set(Box::new(TypeWrapper::String))).into()).unwrap()
     });
 
-pub static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
+pub static ENTITY_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
     name: CedarTypeName::new(META_NS.clone(), "V1ObjectMeta").unwrap(),
     attrs: BTreeMap::from([
         // TODO: Change these to be simpler with the bare minimal things needed.
@@ -273,7 +273,12 @@ pub static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWra
         ("deletionTimestamp".into(), TypeWrapper::String.optional()), // TODO: timestamp
         ("generateName".into(), TypeWrapper::String.optional()),
     ]),
-    kind: TypeKind::CommonType,
+    kind: TypeKind::EntityType {
+        members_of_types: Vec::new(),
+        apply_to_actions_as_principal: Vec::new(),
+        apply_to_actions_as_resource: Vec::new(),
+        tags: None,
+    },
 });
 
 pub(crate) fn build_base() -> Result<Fragment<RawName>> {
@@ -311,7 +316,7 @@ pub(crate) fn build_base() -> Result<Fragment<RawName>> {
     RESOURCE_RESOURCE.apply(&mut f)?;
     RESOURCE_NONRESOURCEURL.apply(&mut f)?;
 
-    TYPE_OBJECTMETA.apply(&mut f)?;
+    ENTITY_OBJECTMETA.apply(&mut f)?;
     namespace_of_fragment(&mut f, MAP_STRINGSTRING.0.cedar_namespace.clone())
         .entity_types
         .insert(

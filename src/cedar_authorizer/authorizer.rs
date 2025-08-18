@@ -1,6 +1,6 @@
 use cedar_policy_core::validator::{json_schema, RawName};
 use k8s_openapi::api::core::v1 as corev1;
-use kube;
+use kube::{self, Resource};
 use kube::runtime::reflector;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -20,7 +20,7 @@ use crate::k8s_authorizer::{
 use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
     ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
-    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
+    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE, ENTITY_OBJECTMETA,
 };
 use kube::discovery::Scope;
 
@@ -78,8 +78,8 @@ impl<'a, S: KubeStore<corev1::Namespace>>
 
         if let Some(sa_nsname_str) = attrs.user.name.strip_prefix("system:serviceaccount:") {
             let parts: Vec<&str> = sa_nsname_str.split(':').collect();
-            if parts.len() != 2 {
-                return Err(AuthorizerError::InvalidServiceAccount(
+            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                return Err(AuthorizerError::InvalidPrincipal(
                     attrs.user.name.clone(),
                     "expected format: 'system:serviceaccount:<namespace>:<name>'".to_string(),
                 ));
@@ -88,10 +88,14 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             entity_builder.add_attr("namespace", Some(self.namespace_entity(parts[0])?));
             entity_builder.add_attr("name", Some(parts[1]));
 
-            // TODO: Add the namespace anchestor.
-
             principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
         } else if let Some(nodename) = attrs.user.name.strip_prefix("system:node:") {
+            if nodename.is_empty() {
+                return Err(AuthorizerError::InvalidPrincipal(
+                    attrs.user.name.clone(),
+                    "expected format: 'system:node:<name>'".to_string(),
+                ));
+            }
             principal_type = PRINCIPAL_NODE.name.name();
             // TODO: Add some validation here
             entity_builder.add_attr("name", Some(nodename));
@@ -101,22 +105,24 @@ impl<'a, S: KubeStore<corev1::Namespace>>
     }
 
     fn namespace_entity(&self, ns_name: &str) -> Result<BuiltEntity, AuthorizerError> {
-        let ns_ref = reflector::ObjectRef::new(ns_name);
-        let ns = self
+        let stored_ns = self
             .namespaces
-            .get(&ns_ref)
-            .ok_or(AuthorizerError::NoKubernetesNamespace)?;
-
-        let ns_uid = ns
-            .metadata
-            .uid
-            .as_ref()
-            .ok_or(AuthorizerError::NoKubernetesNamespace)?;
-
+            .get(&reflector::ObjectRef::new(ns_name));
+        let stored_ns_metadata = stored_ns.as_ref().map(|ns| &ns.metadata);
+        
         Ok(EntityBuilder::new()
-            .with_eid(ns_uid)
+            // Note: We cannot block on the namespace being present in order allow for checks like
+            // "resource.namespace.name == 'foo'" or "principal.namespace == resource.namespace" to be resolvable.
+            // If the namespace is an exact match, the first expression evaluates correctly in TPE, even though
+            // the metadata is not present. In order to make the second expression also evaluate correctly,
+            // we let the namespace name define the entity ID. If we ever add more information that fully-qualifies
+            // the namespace, we need to update this to avoid conflicts.
+            .with_eid(ns_name)
             .with_attr("name", Some(ns_name))
-            .with_metadata(&ns.metadata)
+            .with_metadata(match stored_ns_metadata {
+                Some(ns_metadata) => Some(ns_metadata),
+                None => None,
+                })
             .build(ENTITY_NAMESPACE.name.name()))
     }
 
@@ -288,6 +294,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                         // However, in theory all matched resources could be cluster-scoped (imagine apiGroup="foo" and resource="*"),
                         // where all resources in apiGroup="foo" are cluster-scoped. If so, it would be better to make "resource has namespace"
                         // queries return "false", but this we cannot know, we lose a little bit of precision here.
+                        // TODO: Create a Cedar issue to discuss whether "foo has bar" should be able to be unknown, which is what we want here.
                         EmptyWildcardStringSelector::Any => {
                             Some(EntityBuilder::build_unknown(ENTITY_NAMESPACE.name.name()))
                         }
@@ -426,7 +433,6 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
                 let mut allowed_ids = HashSet::new();
                 // TODO: Check the * action first, then others.
                 for (action, _) in k8s_ns.actions.iter() {
-                    println!("action: {action}");
 
                     let resp = self.is_authorized_for_action(&attrs, action.as_str())?;
                     // TODO: Propagate errors?
@@ -669,24 +675,6 @@ mod test {
             },
         ]);
 
-        let discovery = TestKubeDiscovery::new(vec![TestKubeApiGroup {
-            name: "".to_string(),
-            recommended_groups_resources: vec![(
-                ApiResource {
-                    group: "".to_string(),
-                    version: "v1".to_string(),
-                    kind: "Node".to_string(),
-                    plural: "nodes".to_string(),
-                    api_version: "v1".to_string(),
-                },
-                ApiCapabilities {
-                    scope: Scope::Cluster,
-                    subresources: vec![],
-                    operations: vec![],
-                },
-            )],
-        }]);
-
         let schema = super::kube_invariants::Schema::new(schema).unwrap();
         let policies =
             super::kube_invariants::PolicySet::new(policies.as_ref(), Arc::new(schema.clone()))
@@ -721,41 +709,55 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
-            ("serviceaccount can get serviceaccounts in its own namespace",
+            ("serviceaccount can get pods in its own namespace",
             AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::allow()),
-            ("serviceaccount can get serviceaccounts in its own namespace, but through a field selector",
+            ("serviceaccount can get pods in its own namespace, but through a field selector",
             AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any,
                     None,
                     Some(vec![Selector::in_values("metadata.namespace", false, vec!["foo".to_string()])])
                 )
                 .build(), Response::allow()),
-            ("serviceaccount can get serviceaccounts in its own namespace, but not in the supersecret namespace",
+            ("serviceaccount can get pods in its own namespace, but not in the supersecret namespace",
             AttributesBuilder::resource("system:serviceaccount:supersecret:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("supersecret".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
-            ("serviceaccount can get serviceaccounts in a namespace which does not have the label",
+            ("serviceaccount can get pods in a namespace which does not have the label",
             AttributesBuilder::resource("system:serviceaccount:bar:bar", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "serviceaccounts".to_string() },
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("bar".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
+            ("serviceaccount can conditionally get pods in a namespace which is not in the storage",
+            AttributesBuilder::resource("system:serviceaccount:baz:baz", Verb::Get,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Exact("baz".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::conditional(kube_invariants::PolicySet::from_str(r#"permit(
+    principal,
+    action,
+    resource
+) when {
+(((meta::V1ObjectMeta::"3dd67f29-eebf-407f-b239-acf94c137188"["labels"]).hasTag("serviceaccounts-allowed")) && (((meta::V1ObjectMeta::"3dd67f29-eebf-407f-b239-acf94c137188"["labels"]).getTag("serviceaccounts-allowed")) == "true"))
+};"#, Arc::new(schema.clone())).unwrap())),
             ("anonymous user can get openapi v2",
             AttributesBuilder::nonresource("system:anonymous", Verb::Get,
                 StarWildcardStringSelector::Exact("/openapi/v2".to_string()))
@@ -800,14 +802,14 @@ mod test {
   action,
   resource
 ) when {
-  (((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf" has "v1") && ((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf"["v1"]) has "spec")) && ((((core::VersionedPod::"1b37335f-7411-4144-b350-88b7a88ee3cf"["v1"])["spec"])["nodeName"]) == "node-1"))
+  (((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829" has "v1") && ((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829"["v1"]) has "spec")) && ((((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829"["v1"])["spec"])["nodeName"]) == "node-1"))
 };"#, Arc::new(schema.clone())).unwrap())),
-            ("lucas can get pods in the foo namespace",
+            ("lucas can get pods in the notinstorage namespace",
             AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Any,
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("foo".to_string()),
+                    EmptyWildcardStringSelector::Exact("notinstorage".to_string()),
                     EmptyWildcardStringSelector::Any)
                     .with_group("lucas")
                 .build(), Response::allow()),

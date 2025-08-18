@@ -10,7 +10,7 @@ use smol_str::{SmolStr, ToSmolStr};
 use uuid::Uuid;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 
-use crate::schema::core::{MAP_STRINGSTRING, MAP_STRINGSTRINGSET, TYPE_OBJECTMETA};
+use crate::schema::core::{MAP_STRINGSTRING, MAP_STRINGSTRINGSET, ENTITY_OBJECTMETA};
 
 #[cfg(test)]
 static TEST_RNG: LazyLock<Mutex<rand::rngs::StdRng>> = LazyLock::new(|| {
@@ -202,18 +202,20 @@ pub trait RecordBuilder: Sized {
         self.add_attr(key, Some(Value::set_of_lits(set, None)));
     }
 
-    fn add_metadata(&mut self, metadata: &metav1::ObjectMeta) {
+    fn add_metadata(&mut self, metadata_option: Option<&metav1::ObjectMeta>) {
         self.add_attr(
             "metadata",
-            Some(
-                EntityBuilder::new()
-                    .with_string_to_string_map("labels", metadata.labels.as_ref())
-                    .with_string_to_string_map("annotations", metadata.annotations.as_ref())
-                    .with_string_set("finalizers", metadata.finalizers.clone())
-                    .with_attr("uid", metadata.uid.clone())
-                    .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
-                    .build(TYPE_OBJECTMETA.name.name()),
-            ),
+            match metadata_option {
+                Some(metadata) => 
+                    Some(EntityBuilder::new()
+                        .with_string_to_string_map("labels", metadata.labels.as_ref())
+                        .with_string_to_string_map("annotations", metadata.annotations.as_ref())
+                        .with_string_set("finalizers", metadata.finalizers.clone())
+                        .with_attr("uid", metadata.uid.clone())
+                        .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
+                        .build(ENTITY_OBJECTMETA.name.name())),
+                None => Some(EntityBuilder::build_unknown_internal_name(ENTITY_OBJECTMETA.name.name().into())),
+            },
         );
     }
 
@@ -258,8 +260,8 @@ pub trait RecordBuilder: Sized {
     }
 
     #[must_use]
-    fn with_metadata(mut self, metadata: &metav1::ObjectMeta) -> Self {
-        self.add_metadata(metadata);
+    fn with_metadata(mut self, metadata_option: Option<&metav1::ObjectMeta>) -> Self {
+        self.add_metadata(metadata_option);
         self
     }
 }

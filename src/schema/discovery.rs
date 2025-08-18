@@ -5,7 +5,7 @@ use cedar_policy_core::validator::json_schema::{
 use cedar_policy_core::validator::RawName;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
 
-use super::core::{ENTITY_NAMESPACE, K8S_NS, TYPE_OBJECTMETA};
+use super::core::{ENTITY_NAMESPACE, K8S_NS, ENTITY_OBJECTMETA};
 
 use super::err::Result;
 use super::openapi::GroupVersionedOpenAPIType;
@@ -167,7 +167,7 @@ pub fn with_kubernetes_groupversion(
                                 // Only add metadata if it really exists on the top-level object, although it exists for pretty much all objects.
                                 // TODO: How much information is available in admission for status subresource requests?
                                 "metadata".into(),
-                                TypeWrapper::CommonRef(TYPE_OBJECTMETA.name.full_name()).required(),
+                                TypeWrapper::CommonRef(ENTITY_OBJECTMETA.name.full_name()).required(),
                             ),
                         ]),
                         additional_attributes: false,
