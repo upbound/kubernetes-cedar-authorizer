@@ -106,7 +106,7 @@ pub(crate) enum TypeKind<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ActionUID(pub(crate) Option<Name>, pub(crate) String);
+pub struct ActionUID(pub(crate) Option<Name>, pub(crate) String);
 
 impl ActionUID {
     pub(crate) fn apply(

@@ -693,7 +693,7 @@ mod test {
         use cedar_policy_core::validator::json_schema::Fragment;
         use k8s_openapi::api::core::v1 as corev1;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
-        use kube::discovery::{ApiCapabilities, ApiResource, Scope};
+
         use std::collections::{BTreeMap, HashMap};
         use std::str::FromStr;
         use std::sync::Arc;

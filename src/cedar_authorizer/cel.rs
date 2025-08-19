@@ -1,19 +1,9 @@
 use std::collections::HashMap;
 
 use cedar_policy_core::ast as cedar_ast;
-use cel::parser::ast as cel_ast;
-use cel::IdedExpr as CelIdedExpr;
 use itertools::Itertools;
 
 // TODO: Maybe we could just take a Residual instead, that might be a bit more straightforward than PolicySet Expr.
-
-fn without_id_res(expr: cel_ast::Expr) -> Result<CelIdedExpr, CedarToCelError> {
-    Ok(without_id(expr))
-}
-
-fn without_id(expr: cel_ast::Expr) -> CelIdedExpr {
-    CelIdedExpr { id: 0, expr }
-}
 
 #[derive(thiserror::Error, Debug)]
 pub enum CedarToCelError {
@@ -193,7 +183,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
             cedar_to_cel(then_expr, entity_uid_mapper)?,
             cedar_to_cel(else_expr, entity_uid_mapper)?
         ))),
-        cedar_ast::ExprKind::Is { expr, entity_type } => todo!(),
+        cedar_ast::ExprKind::Is { .. } => todo!(),
         cedar_ast::ExprKind::Like { expr, pattern } => {
             let expr = cedar_to_cel(expr, entity_uid_mapper)?;
             let literal_string = || {

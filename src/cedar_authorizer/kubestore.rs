@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::{hash::Hash, sync::Arc};
 
-use kube::api::ApiResource;
-use kube::discovery::ApiCapabilities;
-use kube::{discovery::ApiGroup, runtime::reflector, runtime::watcher};
+use kube::{runtime::reflector, runtime::watcher};
 
 use futures_util::{future::ready, StreamExt};
 use kube::runtime::WatchStreamExt;

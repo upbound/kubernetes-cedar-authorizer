@@ -14,11 +14,7 @@ use super::err::{Result, SchemaProcessingError};
 use super::util::{make_stringmap_type, namespace_of_fragment};
 
 pub(crate) struct GroupVersionedOpenAPIType {
-    pub(crate) gv: CedarGroupVersion,
-    // something like "PodStatus", scoped within gv
-    pub(crate) openapi_type_name: String,
     pub(crate) cedar_type_name: CedarTypeName,
-    //pub(crate) is_gvk: bool,
 }
 
 static META_COMPONENT_PREFIXES: LazyLock<HashSet<&str>> = LazyLock::new(|| {
@@ -91,8 +87,6 @@ impl GroupVersionedOpenAPIType {
                     &openapi_type_name
                 ),
             )?,
-            gv,
-            openapi_type_name,
         })
     }
 
@@ -550,77 +544,41 @@ mod test {
             CedarGroupVersion::new("gateway.networking.k8s.io".to_string(), "v1".to_string())
                 .expect("parse works");*/
         let tests = Vec::from([
-            (
-                "io.k8s.api.core.v1.Volume",
-                "core::V1Volume",
-                "",
-                "v1",
-                "Volume",
-            ),
+            ("io.k8s.api.core.v1.Volume", "core::V1Volume"),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector",
                 "meta::V1LabelSelector",
-                "meta",
-                "v1",
-                "LabelSelector",
             ),
             (
                 "io.k8s.api.apps.v1.DeploymentStatus",
                 "apps::V1DeploymentStatus",
-                "apps",
-                "v1",
-                "DeploymentStatus",
             ),
-            (
-                "io.k8s.api.core.v1.PodSpec",
-                "core::V1PodSpec",
-                "",
-                "v1",
-                "PodSpec",
-            ),
+            ("io.k8s.api.core.v1.PodSpec", "core::V1PodSpec"),
             (
                 "io.k8s.apimachinery.pkg.api.resource.Quantity",
                 "meta::V1Quantity",
-                "meta",
-                "v1",
-                "Quantity",
             ),
             (
                 "io.k8s.api.rbac.v1.Subject",
                 "io::k8s::authorization::rbac::V1Subject",
-                "rbac.authorization.k8s.io",
-                "v1",
-                "Subject",
             ),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta",
                 "meta::V1ListMeta",
-                "meta",
-                "v1",
-                "ListMeta",
             ),
             (
                 "io.k8s.networking.gateway.v1.GRPCRoute",
                 "io::k8s::networking::gateway::V1GRPCRoute",
-                "gateway.networking.k8s.io",
-                "v1",
-                "GRPCRoute",
             ),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.Status",
                 "meta::V1Status",
-                "meta",
-                "v1",
-                "Status",
             ),
         ]);
         for test in tests {
             let t = super::GroupVersionedOpenAPIType::from_component_name(test.0)
                 .expect("test to not error");
             assert_eq!(t.cedar_type_name.full_name().to_string(), test.1);
-            assert_eq!(t.gv.group, test.2);
-            assert_eq!(t.gv.version, test.3);
-            assert_eq!(t.openapi_type_name, test.4);
         }
     }
 
