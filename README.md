@@ -16,6 +16,46 @@ results here and/or later in Cedar Access Control for Kubernetes.
 
 Let me know if you have feedback or ideas.
 
+## Kubernetes Conditional Authorization
+
+The idea is to extend Kubernetes Authorization framework with conditions on the
+request payload and/or stored object, in order for the request to succeed.
+
+For example:
+
+- TODO
+
+Conditional Authorization is available IFF:
+
+- The SubjectAccessReview (SAR) sender indicates it supports the feature using the
+  `kubernetes.io/ConditionalAuthorizationFeature=true` annotation. Conditions
+  MUST NOT be returned if this annotation is not set, but instead any
+  conditional response that was yielded must be folded into a `NoOpinion`
+  response.
+  - This allows for backwards-compability with an old SAR sender, but new SAR
+    authorizer implementation.
+- The SubjectAccessReview server support conditions, and when needed, responds
+  with `.status.conditions` non-null, along with `.status.allowed=false` and
+  `.status.denied=false`.
+  - In case the SAR sender is new, but SAR authorizer implementation old, no
+    conditions will ever be returned, but all existing properties about the
+    other authorizer are backwards-compatible.
+- The `apiGroup != *`, `resource != *`,
+  `subresource == "" || (subresource != "" && subresource != "*")`, and verb is
+  one of `create`, `update`, `patch`, `delete`. If conditions are present in
+  these conditions, then the API server makes sure that the conditions are
+  type-safe according to the current OpenAPI schema of the targeted resource.
+
+
+
+
+TODO: When the API server encounters a conditional response, but has multiple
+other authorizers left in the chain, should they be consulted, or should it just
+short-circuit? I guess just short-circuit, as a conditional response != NoOpinion,
+there is clearly an opinion about this request by this authorizer.
+
+
+
 [Cedar]: https://github.com/cedar-policy/cedar
 [Kubernetes]: https://github.com/kubernetes/kubernetes
 [MSc thesis]: https://github.com/luxas/research/blob/main/msc_thesis.pdf
