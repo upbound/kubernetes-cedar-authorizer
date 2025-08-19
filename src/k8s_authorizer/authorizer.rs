@@ -118,7 +118,10 @@ impl Response {
             errors: errors.into_iter().collect(),
         }
     }
-    pub fn conditional(policies: kube_invariants::PolicySet, unknown_jsonpaths_to_uid: HashMap<String, EntityUID>) -> Self {
+    pub fn conditional(
+        policies: kube_invariants::PolicySet,
+        unknown_jsonpaths_to_uid: HashMap<String, EntityUID>,
+    ) -> Self {
         Self {
             decision: Decision::Conditional(policies, unknown_jsonpaths_to_uid),
             reason: Default::default(),
@@ -139,7 +142,10 @@ impl Display for Decision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Decision::Allow => write!(f, "Decision::Allow"),
-            Decision::Conditional(policies, unknown_jsonpaths_to_uid) => write!(f, r#"Decision::Conditional: {policies} ({unknown_jsonpaths_to_uid:?})"#),
+            Decision::Conditional(policies, unknown_jsonpaths_to_uid) => write!(
+                f,
+                r#"Decision::Conditional: {policies} ({unknown_jsonpaths_to_uid:?})"#
+            ),
             Decision::Deny => write!(f, "Decision::Deny"),
             Decision::NoOpinion => write!(f, "Decision::NoOpinion"),
         }

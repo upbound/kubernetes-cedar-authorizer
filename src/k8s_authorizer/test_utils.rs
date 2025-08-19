@@ -37,7 +37,15 @@ impl AttributesBuilder {
         name: EmptyWildcardStringSelector,
     ) -> Self {
         Self::resource_and_selectors(
-            username, verb, api_group, api_version, resource, namespace, name, None, None,
+            username,
+            verb,
+            api_group,
+            api_version,
+            resource,
+            namespace,
+            name,
+            None,
+            None,
         )
     }
 

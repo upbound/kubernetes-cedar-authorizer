@@ -73,12 +73,18 @@ impl<'a> PartialResponseNew<'a> {
                         super::PolicySet::new(&allowed_residuals, self.schema.clone())?;
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allowed_residuals, false)?; // TODO: Figure out how to handle policy IDs
-                    Ok(DetailedDecision::Conditional(residual_policies, HashMap::new()))
+                    Ok(DetailedDecision::Conditional(
+                        residual_policies,
+                        HashMap::new(),
+                    ))
                 }
                 AllowDecision::Conditional(allow_residuals) => {
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allow_residuals, false)?;
-                    Ok(DetailedDecision::Conditional(residual_policies, HashMap::new()))
+                    Ok(DetailedDecision::Conditional(
+                        residual_policies,
+                        HashMap::new(),
+                    ))
                 }
                 AllowDecision::NoMatch => Ok(DetailedDecision::NoOpinion),
             };
@@ -89,9 +95,10 @@ impl<'a> PartialResponseNew<'a> {
         match self.allow_decision()? {
             AllowDecision::Allow(ids) => Ok(DetailedDecision::Allow(ids)),
             // TODO: Should we include here the forbid or permit policies that did fold to false? I guess not, and that is a "feature" for clarity.
-            AllowDecision::Conditional(allow_residuals) => {
-                Ok(DetailedDecision::Conditional(allow_residuals, HashMap::new()))
-            }
+            AllowDecision::Conditional(allow_residuals) => Ok(DetailedDecision::Conditional(
+                allow_residuals,
+                HashMap::new(),
+            )),
             AllowDecision::NoMatch => Ok(DetailedDecision::NoOpinion),
         }
     }

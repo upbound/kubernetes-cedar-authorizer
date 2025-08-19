@@ -2,8 +2,8 @@ use cedar_policy_core::validator::json_schema::{CommonTypeId, NamespaceDefinitio
 use cedar_policy_core::validator::{json_schema, RawName};
 use k8s_openapi::api::core::v1 as corev1;
 use kube::core::GroupVersion;
-use kube::{self, Resource};
 use kube::runtime::reflector;
+use kube::{self, Resource};
 use smol_str::SmolStr;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -22,14 +22,14 @@ use crate::k8s_authorizer::{
 };
 use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
-    ENTITY_NAMESPACE, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
-    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE, ENTITY_OBJECTMETA,
+    ENTITY_NAMESPACE, ENTITY_OBJECTMETA, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 use kube::discovery::Scope;
 
 use cedar_policy_core::ast;
 
-use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilderImpl, RecordBuilder};
+use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder, RecordBuilderImpl};
 use super::kube_invariants::SchemaError;
 use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
@@ -62,14 +62,9 @@ pub struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>> {
     // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl<S: KubeStore<corev1::Namespace>>
-    CedarKubeAuthorizer<S>
-{
+impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
-    pub fn new(
-        policies: kube_invariants::PolicySet,
-        namespaces: S,
-    ) -> Result<Self, SchemaError> {
+    pub fn new(policies: kube_invariants::PolicySet, namespaces: S) -> Result<Self, SchemaError> {
         Ok(Self {
             policies,
             namespaces,
@@ -85,14 +80,7 @@ impl<S: KubeStore<corev1::Namespace>>
         let mut entity_builder: EntityBuilder = EntityBuilder::new()
             .with_attr("username", Some(attrs.user.name.as_str()))
             .with_string_set("groups", Some(attrs.user.groups.iter().map(|s| s.as_str())))
-            .with_attr(
-                "uid",
-                attrs
-                    .user
-                    .uid
-                    .as_ref()
-                    .map(|uid| uid.as_str()),
-            )
+            .with_attr("uid", attrs.user.uid.as_ref().map(|uid| uid.as_str()))
             .with_string_to_stringset_map("extra", Some(&attrs.user.extra));
 
         let mut principal_type = PRINCIPAL_USER.name.name();
@@ -126,20 +114,18 @@ impl<S: KubeStore<corev1::Namespace>>
     }
 
     fn namespace_entity(&self, ns_name: &str) -> Result<BuiltEntity, AuthorizerError> {
-        let stored_ns = self
-            .namespaces
-            .get(&reflector::ObjectRef::new(ns_name));
+        let stored_ns = self.namespaces.get(&reflector::ObjectRef::new(ns_name));
         let stored_ns_metadata = stored_ns.as_ref().map(|ns| &ns.metadata);
-        
+
         Ok(EntityBuilder::new()
             // Note: resource.namespace.name is populated (if non-wildcard), although the namespace
             // does not exist in Kubernetes, and thus no metadata is available (left unknown).
             .with_attr("name", Some(ns_name))
-            // TODO: Should this entity also have a deterministic UID; as 
+            // TODO: Should this entity also have a deterministic UID; as
             .with_metadata(match stored_ns_metadata {
                 Some(ns_metadata) => Some(ns_metadata),
                 None => None,
-                })
+            })
             .build(ENTITY_NAMESPACE.name.name()))
     }
 
@@ -201,7 +187,12 @@ impl<S: KubeStore<corev1::Namespace>>
                     ) => match self
                         .find_schema_entity_for_api_group_and_resource(api_group, resource)
                     {
-                        Some(( resource_type_namespace_name, resource_type_namespace, typed_resource_entity_id, resource_type)) => {
+                        Some((
+                            resource_type_namespace_name,
+                            resource_type_namespace,
+                            typed_resource_entity_id,
+                            resource_type,
+                        )) => {
                             let record = entity_to_record(&resource_type)?;
                             resource_builder.add_attr(
                                 "namespace",
@@ -223,13 +214,16 @@ impl<S: KubeStore<corev1::Namespace>>
                             );
 
                             // TODO: Enforce all these invariants early on, instead of here (late).
-                            // In that case, we can guard against ever starting to consider a faulty schema and 
+                            // In that case, we can guard against ever starting to consider a faulty schema and
                             // thus failing all authz requests.
                             let kind = resource_type.annotations.0.get(&"kind".parse().unwrap()).into_iter().flatten().map(|a| a.val.clone()).next().ok_or_else(||AuthorizerError::UnexpectedSchemaShape("schema should have kind annotation registered at GVR resource entity".to_string()))?;
-                            
+
                             match &resource_attrs.api_version {
                                 StarWildcardStringSelector::Exact(api_version) => {
-                                    let api_group_version: SmolStr = GroupVersion::gv(&api_group, api_version).api_version().into();
+                                    let api_group_version: SmolStr =
+                                        GroupVersion::gv(&api_group, api_version)
+                                            .api_version()
+                                            .into();
                                     resource_builder.add_attr(
                                         "request",
                                         match record.attributes.get("request") {
@@ -265,7 +259,7 @@ impl<S: KubeStore<corev1::Namespace>>
                                             None => None,
                                         },
                                     );
-        
+
                                     resource_builder.add_attr(
                                         "stored",
                                         match record.attributes.get("stored") {
@@ -314,7 +308,13 @@ impl<S: KubeStore<corev1::Namespace>>
                                 StarWildcardStringSelector::Any => (),
                             }
 
-                            Ok((resource_builder.build(Name::unqualified_name(typed_resource_entity_id).qualify_with_name(resource_type_namespace_name.as_ref())), true))
+                            Ok((
+                                resource_builder.build(
+                                    Name::unqualified_name(typed_resource_entity_id)
+                                        .qualify_with_name(resource_type_namespace_name.as_ref()),
+                                ),
+                                true,
+                            ))
                         }
                         // Untyped k8s::Resource case, due to to the resource requested not being in the schema,
                         // e.g. due to discovery not being up to date, or the requested resource begin "virtual".
@@ -362,32 +362,35 @@ impl<S: KubeStore<corev1::Namespace>>
         &'a self,
         api_group: &str,
         resource: &str,
-    ) -> Option<(&'a Option<Name>, &'a NamespaceDefinition<RawName>, UnreservedId, &'a json_schema::EntityType<RawName>)> {
-
-        let (ns_name, ns) = self.policies.schema_ref().get_fragment().0.iter().find(|(_, entity)| {
-            match entity.annotations.0.get(&API_GROUP_ANNOTATION) {
-                Some(api_group_annotation) => match api_group_annotation {
-                    Some(Annotation { val, .. }) => val.as_str() == api_group,
-                    None => false,
-                },
-                None => false,
-            }
-        })?;
+    ) -> Option<(
+        &'a Option<Name>,
+        &'a NamespaceDefinition<RawName>,
+        UnreservedId,
+        &'a json_schema::EntityType<RawName>,
+    )> {
+        let (ns_name, ns) =
+            self.policies
+                .schema_ref()
+                .get_fragment()
+                .0
+                .iter()
+                .find(
+                    |(_, entity)| match entity.annotations.0.get(&API_GROUP_ANNOTATION) {
+                        Some(api_group_annotation) => match api_group_annotation {
+                            Some(Annotation { val, .. }) => val.as_str() == api_group,
+                            None => false,
+                        },
+                        None => false,
+                    },
+                )?;
 
         // TODO: If unwrap is used, at least replace them all with an expect.
-        let resource_cedar_compatible_name = resource.replace("/", "_").parse::<UnreservedId>().unwrap();
+        let resource_cedar_compatible_name =
+            resource.replace("/", "_").parse::<UnreservedId>().unwrap();
         ns.entity_types
             .get(&resource_cedar_compatible_name)
-            .map(| entity_type| {
-                (
-                    ns_name,
-                    ns,
-                    resource_cedar_compatible_name,
-                    entity_type,
-                )
-            })
+            .map(|entity_type| (ns_name, ns, resource_cedar_compatible_name, entity_type))
     }
-
 
     // INVARIANT: verb is validated to exist in the schema already.
     fn is_authorized_for_action(
@@ -423,14 +426,15 @@ impl<S: KubeStore<corev1::Namespace>>
             self.policies.schema().as_ref().as_ref(),
         )?;
 
-        
         let (principal_entities, principal_jsonpaths) = principal_entity.into_parts("principal");
         let (resource_entities, resource_jsonpaths) = resource_entity.into_parts("resource");
 
         // Note: There must be no duplicate UIDs in the entities, as we do not deduplicate them.
         // As of writing, no such duplicate entities between principal and resource is known.
         let entities = PartialEntities::from_entities(
-            principal_entities.into_iter().chain(resource_entities.into_iter()),
+            principal_entities
+                .into_iter()
+                .chain(resource_entities.into_iter()),
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -445,10 +449,14 @@ impl<S: KubeStore<corev1::Namespace>>
             // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
             DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid) => {
                 if typed_resource {
-                    DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid.into_iter()
-                        .chain(principal_jsonpaths.into_iter())
-                        .chain(resource_jsonpaths.into_iter())
-                        .collect())
+                    DetailedDecision::Conditional(
+                        condition,
+                        unknown_jsonpaths_to_uid
+                            .into_iter()
+                            .chain(principal_jsonpaths.into_iter())
+                            .chain(resource_jsonpaths.into_iter())
+                            .collect(),
+                    )
                 } else {
                     DetailedDecision::NoOpinion
                 }
@@ -461,9 +469,7 @@ impl<S: KubeStore<corev1::Namespace>>
     }
 }
 
-impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
-    for CedarKubeAuthorizer<S>
-{
+impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer for CedarKubeAuthorizer<S> {
     fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         // Check that verb is supported in schema
         // If * => check with every action in schema in subroutine
@@ -492,7 +498,6 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
                 let mut allowed_ids = HashSet::new();
                 // TODO: Check the * action first, then others.
                 for (action, _) in k8s_ns.actions.iter() {
-
                     let resp = self.is_authorized_for_action(&attrs, action.as_str())?;
                     // TODO: Propagate errors?
 
@@ -546,9 +551,13 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
                             &action_str,
                             &forbidden_policy_ids,
                         ))),
-                    DetailedDecision::Conditional(conditional_policies, unknown_jsonpaths_to_uid) => {
-                        Ok(Response::conditional(conditional_policies, unknown_jsonpaths_to_uid))
-                    }
+                    DetailedDecision::Conditional(
+                        conditional_policies,
+                        unknown_jsonpaths_to_uid,
+                    ) => Ok(Response::conditional(
+                        conditional_policies,
+                        unknown_jsonpaths_to_uid,
+                    )),
                     DetailedDecision::NoOpinion => Ok(Response::no_opinion()
                         .with_reason(Reason::no_allow_policy_match(&action_str))),
                 }
@@ -637,14 +646,18 @@ fn entity_to_record(
     entity: &json_schema::EntityType<RawName>,
 ) -> Result<&json_schema::RecordType<RawName>, AuthorizerError> {
     match &entity.kind {
-        json_schema::EntityTypeKind::Standard(standard_type) => type_to_record(&standard_type.shape.0),
+        json_schema::EntityTypeKind::Standard(standard_type) => {
+            type_to_record(&standard_type.shape.0)
+        }
         _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
             "Expected record type, got {entity:?}"
         ))),
     }
 }
 
-fn type_to_record(ty: &json_schema::Type<RawName>) -> Result<&json_schema::RecordType<RawName>, AuthorizerError> {
+fn type_to_record(
+    ty: &json_schema::Type<RawName>,
+) -> Result<&json_schema::RecordType<RawName>, AuthorizerError> {
     match ty {
         json_schema::Type::Type { ty, .. } => match ty {
             json_schema::TypeVariant::Record(record) => Ok(record),
@@ -743,8 +756,7 @@ mod test {
             super::kube_invariants::PolicySet::new(policies.as_ref(), Arc::new(schema.clone()))
                 .unwrap();
 
-        let authorizer =
-            super::CedarKubeAuthorizer::new(policies, namespace_store).unwrap();
+        let authorizer = super::CedarKubeAuthorizer::new(policies, namespace_store).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![

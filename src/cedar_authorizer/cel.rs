@@ -65,26 +65,26 @@ impl EntityToCelVariableMapper for DefaultEntityToCelVariableMapper {
 pub struct CELExpression(String);
 
 impl CELExpression {
-  pub fn as_str(&self) -> &str {
-    &self.0
-  }
-  fn new_unchecked(s: String) -> Self {
-    Self(s)
-  }
-  // TODO: This does not work in the general case, it's a hack. Need to actually parse the AST and rewrite that way.
-  // For example, replacing "resource.name" does not match "resource["name"]"; and "resource.name" might be part of a string literal, etc.
-  pub fn rename_variables(&self, mappings: &HashMap<String, String>) -> Self {
-    let mut expr = self.0.clone();
-    for (old_name, new_name) in mappings {
-      expr = expr.replace(old_name, new_name);
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
-    Self(expr)
-  }
+    fn new_unchecked(s: String) -> Self {
+        Self(s)
+    }
+    // TODO: This does not work in the general case, it's a hack. Need to actually parse the AST and rewrite that way.
+    // For example, replacing "resource.name" does not match "resource["name"]"; and "resource.name" might be part of a string literal, etc.
+    pub fn rename_variables(&self, mappings: &HashMap<String, String>) -> Self {
+        let mut expr = self.0.clone();
+        for (old_name, new_name) in mappings {
+            expr = expr.replace(old_name, new_name);
+        }
+        Self(expr)
+    }
 }
 impl std::fmt::Display for CELExpression {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.0)
-  }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 // TODO: Improve the Rust CEL library to support marshalling an AST to a String.
@@ -130,7 +130,10 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 // Could maybe also use the extension function "contains" instead of "in"
                 let set = cedar_to_cel(arg1, entity_uid_mapper)?;
                 let val = cedar_to_cel(arg2, entity_uid_mapper)?;
-                Ok(CELExpression::new_unchecked(format!("({} in {})", val, set)))
+                Ok(CELExpression::new_unchecked(format!(
+                    "({} in {})",
+                    val, set
+                )))
             }
             cedar_ast::BinaryOp::ContainsAll => {
                 // The Cedar containsAll function "evaluates to true if every member of the operand set is a member of the receiver set.""
@@ -138,7 +141,10 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 let superset = cedar_to_cel(arg1, entity_uid_mapper)?;
                 let subset = cedar_to_cel(arg2, entity_uid_mapper)?;
                 // TODO: What happens if the i variable is already used somewhere else in the scope?
-                Ok(CELExpression::new_unchecked(format!("{}.all(i, i in {})", subset, superset)))
+                Ok(CELExpression::new_unchecked(format!(
+                    "{}.all(i, i in {})",
+                    subset, superset
+                )))
             }
             cedar_ast::BinaryOp::ContainsAny => {
                 // The Cedar containsAny function "evaluates to true if any one or more members of the operand set is a member of the receiver set"
@@ -146,7 +152,10 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 let superset = cedar_to_cel(arg1, entity_uid_mapper)?;
                 let subset = cedar_to_cel(arg2, entity_uid_mapper)?;
 
-                Ok(CELExpression::new_unchecked(format!("{}.exists(i, i in {})", subset, superset)))
+                Ok(CELExpression::new_unchecked(format!(
+                    "{}.exists(i, i in {})",
+                    subset, superset
+                )))
             }
             cedar_ast::BinaryOp::Eq => Ok(CELExpression::new_unchecked(format!(
                 "({} == {})",
@@ -218,13 +227,22 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 .filter(|c| matches!(c, cedar_ast::PatternElem::Wildcard))
                 .count()
             {
-                0 => Ok(CELExpression::new_unchecked(format!("{expr} == '{}'", literal_string()))),
+                0 => Ok(CELExpression::new_unchecked(format!(
+                    "{expr} == '{}'",
+                    literal_string()
+                ))),
                 1 => match (pattern.get_elems().first(), pattern.get_elems().last()) {
                     (Some(cedar_ast::PatternElem::Wildcard), Some(_)) => {
-                        Ok(CELExpression::new_unchecked(format!("{expr}.endsWith('{}')", literal_string())))
+                        Ok(CELExpression::new_unchecked(format!(
+                            "{expr}.endsWith('{}')",
+                            literal_string()
+                        )))
                     }
                     (Some(_), Some(cedar_ast::PatternElem::Wildcard)) => {
-                        Ok(CELExpression::new_unchecked(format!("{expr}.startsWith('{}')", literal_string())))
+                        Ok(CELExpression::new_unchecked(format!(
+                            "{expr}.startsWith('{}')",
+                            literal_string()
+                        )))
                     }
                     _ => Ok(CELExpression::new_unchecked(format!(
                         "{expr}.matches('^{}$')",
@@ -260,12 +278,19 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 .iter()
                 .map(|v| cedar_to_cel(v, entity_uid_mapper))
                 .collect::<Result<Vec<CELExpression>, CedarToCelError>>()?
-                .iter().map(|e| e.to_string())
+                .iter()
+                .map(|e| e.to_string())
                 .join(", ")
         ))),
         cedar_ast::ExprKind::UnaryApp { op, arg } => match op {
-            cedar_ast::UnaryOp::Not => Ok(CELExpression::new_unchecked(format!("!({})", cedar_to_cel(arg, entity_uid_mapper)?))),
-            cedar_ast::UnaryOp::Neg => Ok(CELExpression::new_unchecked(format!("-({})", cedar_to_cel(arg, entity_uid_mapper)?))),
+            cedar_ast::UnaryOp::Not => Ok(CELExpression::new_unchecked(format!(
+                "!({})",
+                cedar_to_cel(arg, entity_uid_mapper)?
+            ))),
+            cedar_ast::UnaryOp::Neg => Ok(CELExpression::new_unchecked(format!(
+                "-({})",
+                cedar_to_cel(arg, entity_uid_mapper)?
+            ))),
             cedar_ast::UnaryOp::IsEmpty => Ok(CELExpression::new_unchecked(format!(
                 "size({}) == 0",
                 cedar_to_cel(arg, entity_uid_mapper)?
@@ -276,7 +301,9 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
             cedar_ast::Literal::Bool(b) => CELExpression::new_unchecked(b.to_string()),
             cedar_ast::Literal::String(s) => CELExpression::new_unchecked(format!("'{}'", s)),
             cedar_ast::Literal::Long(l) => CELExpression::new_unchecked(l.to_string()),
-            cedar_ast::Literal::EntityUID(uid) => CELExpression::new_unchecked(entity_uid_mapper.cel_identifier_for_entity(uid)),
+            cedar_ast::Literal::EntityUID(uid) => {
+                CELExpression::new_unchecked(entity_uid_mapper.cel_identifier_for_entity(uid))
+            }
         }),
         cedar_ast::ExprKind::Slot(_) => todo!(),
         cedar_ast::ExprKind::Unknown(_) => todo!(),

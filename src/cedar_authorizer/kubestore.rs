@@ -52,12 +52,14 @@ where
 {
     pub fn new(obj_client: kube::Api<K>, token: CancellationToken) -> Self {
         let (store, writer) = reflector::store();
-        
+
         tokio::spawn(async move {
-            let obj_watcher = watcher(obj_client, watcher::Config::default())
-            .take_until(token.cancelled());
+            let obj_watcher =
+                watcher(obj_client, watcher::Config::default()).take_until(token.cancelled());
             reflector(writer, obj_watcher)
-            .applied_objects().for_each(|_| ready(())).await;
+                .applied_objects()
+                .for_each(|_| ready(()))
+                .await;
         });
 
         Self { store }

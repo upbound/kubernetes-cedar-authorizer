@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::cedar_authorizer::cel::{DefaultEntityToCelVariableMapper, cedar_to_cel};
+use crate::cedar_authorizer::cel::{cedar_to_cel, DefaultEntityToCelVariableMapper};
 
 use cedar_policy_core::{
     ast::{self, Expr, ExprKind, Var},
