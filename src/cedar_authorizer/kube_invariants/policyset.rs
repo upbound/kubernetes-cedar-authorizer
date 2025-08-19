@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::cedar_authorizer::cel::{DefaultEntityToCelVariableMapper, cedar_to_cel};
+
 use cedar_policy_core::{
     ast::{self, Expr, ExprKind, Var},
     tpe::{
@@ -77,6 +79,10 @@ impl PolicySet {
 
     pub fn schema(&self) -> Arc<super::Schema> {
         self.schema.clone()
+    }
+
+    pub fn schema_ref(&self) -> &super::Schema {
+        self.schema.as_ref()
     }
 
     /// expr_could_error checks if an expression could error, i.e. if it contains an arithmetic or extension function call.

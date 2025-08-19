@@ -3,7 +3,7 @@ pub enum AuthorizerError {
     #[error("verb {0} is not supported")]
     UnsupportedVerb(String),
     #[error("invalid principal '{0}': {1}")]
-    InvalidServiceAccount(String, String),
+    InvalidPrincipal(String, String),
 
     #[error(transparent)]
     ParseErrors(#[from] cedar_policy_core::parser::err::ParseErrors),
@@ -24,6 +24,10 @@ pub enum AuthorizerError {
     AuthorizerParseError(#[from] ParseError),
     #[error("Unexpected schema shape: {0}")]
     UnexpectedSchemaShape(String),
+    #[error(transparent)]
+    CedarToCelError(#[from] crate::cedar_authorizer::cel::CedarToCelError),
+    #[error(transparent)]
+    SerdeJsonError(#[from] serde_json::Error),
 }
 
 impl axum::response::IntoResponse for AuthorizerError {

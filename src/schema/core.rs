@@ -35,6 +35,7 @@ static RESOURCE_ACTIONS: LazyLock<[ActionUID; 10]> = LazyLock::new(|| {
         ActionUID(K8S_NS.clone(), "list".to_string()),
         ActionUID(K8S_NS.clone(), "watch".to_string()),
         // TIL: Creates can have name from the path already, for subresource requests.
+        // TODO: Add dryRun to create, update, patch, delete, deletecollection actions contexts.
         ActionUID(K8S_NS.clone(), "create".to_string()),
         ActionUID(K8S_NS.clone(), "update".to_string()),
         ActionUID(K8S_NS.clone(), "deletecollection".to_string()),

@@ -11,8 +11,8 @@ namespace k8s {
   entity ServiceAccount = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
-    "name": __cedar::String,
-    "namespace": k8s::Namespace,
+    "serviceAccountNamespace": __cedar::String,
+    "serviceAccountName": __cedar::String,
     "uid"?: __cedar::String,
     "username": __cedar::String
   };
@@ -20,7 +20,7 @@ namespace k8s {
   entity Node = {
     "extra": meta::StringToStringSetMap,
     "groups": Set<__cedar::String>,
-    "name": __cedar::String,
+    "nodeName": __cedar::String,
     "uid"?: __cedar::String,
     "username": __cedar::String
   };
@@ -91,6 +91,7 @@ namespace k8s::nonresource {
 @apiGroup("")
 namespace core {
 
+  @kind("Node")
   entity nodes = {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "nodes"
@@ -99,13 +100,14 @@ namespace core {
     "stored"?: core::VersionedNode
   };
 
-  entity VersionedNode = {
+  type VersionedNode = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Node"
-    "metadata": meta::V1ObjectMeta,
+    "metadata"?: meta::V1ObjectMeta,
     // TODO
   };
 
+  @kind("Pod")
   entity pods = {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "pods"
@@ -114,13 +116,13 @@ namespace core {
     "request"?: core::VersionedPod,
     "stored"?: core::VersionedPod
   };
-  entity VersionedPod = {
+  type VersionedPod = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
     "metadata": meta::V1ObjectMeta,
     "v1"?: core::V1Pod
   };
-  type V1Pod = {
+  entity V1Pod = {
     "spec"?: core::V1PodSpec,
     "status"?: core::V1PodStatus
   };
@@ -132,6 +134,7 @@ namespace core {
     // lots of fields
   };
 
+  @kind("Secret")
   entity secrets = {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "secrets"
@@ -140,19 +143,20 @@ namespace core {
     "request"?: core::VersionedSecret,
     "stored"?: core::VersionedSecret
   };
-  entity VersionedSecret = {
+  type VersionedSecret = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
-    "metadata": meta::V1ObjectMeta,
+    "metadata"?: meta::V1ObjectMeta,
     "v1"?: core::V1Secret
   };
-  type V1Secret = {
+  entity V1Secret = {
     "type": __cedar::String,
     "data"?: meta::StringToStringMap,
     "stringData"?: meta::StringToStringMap,
     "immutable": __cedar::Bool,
   };
 
+  @kind("Pod")
   entity pods_status = {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "pods/status"
@@ -161,10 +165,11 @@ namespace core {
     "request"?: core::VersionedPodStatus,
     "stored"?: core::VersionedPodStatus
   };
-  entity VersionedPodStatus = {
+  type VersionedPodStatus = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
-    "v1": core::V1PodStatus
+    "metadata"?: meta::V1ObjectMeta,
+    "v1"?: core::V1Pod
   };
 }
 

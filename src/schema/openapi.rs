@@ -85,7 +85,7 @@ impl GroupVersionedOpenAPIType {
         Ok(GroupVersionedOpenAPIType {
             cedar_type_name: CedarTypeName::new(
                 gv.cedar_name.clone(),
-                &format!("{}{}", &title_case(&gv.version), &openapi_type_name),
+                &format!("{}{}", &crate::util::title_case(&gv.version), &openapi_type_name),
             )?,
             gv,
             openapi_type_name,
@@ -163,15 +163,7 @@ impl GroupVersionedOpenAPIType {
     }*/
 }
 
-fn title_case(name: &str) -> String {
-    name.chars()
-        .enumerate()
-        .map(|(i, c)| match i {
-            0 => c.to_ascii_uppercase(),
-            _ => c,
-        })
-        .collect()
-}
+
 
 pub(super) fn with_openapi_schemas(
     fragment: &mut Fragment<RawName>,

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 
 use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
@@ -10,7 +11,7 @@ use k8s_openapi::api::authorization::v1::SubjectAccessReview;
 use super::attributes::{Attributes, ResourceAttributes, UserInfo, Verb};
 use super::err::AuthorizerError;
 use super::selectors::Selector;
-use cedar_policy_core::ast;
+use cedar_policy_core::ast::{self, EntityUID};
 
 pub trait KubernetesAuthorizer {
     /// Determines whether the request is authorized.
@@ -117,9 +118,9 @@ impl Response {
             errors: errors.into_iter().collect(),
         }
     }
-    pub fn conditional(policies: kube_invariants::PolicySet) -> Self {
+    pub fn conditional(policies: kube_invariants::PolicySet, unknown_jsonpaths_to_uid: HashMap<String, EntityUID>) -> Self {
         Self {
-            decision: Decision::Conditional(policies),
+            decision: Decision::Conditional(policies, unknown_jsonpaths_to_uid),
             reason: Default::default(),
             errors: Default::default(),
         }
@@ -129,7 +130,7 @@ impl Response {
 #[derive(Debug, PartialEq)]
 pub enum Decision {
     Allow,
-    Conditional(kube_invariants::PolicySet),
+    Conditional(kube_invariants::PolicySet, HashMap<String, EntityUID>),
     Deny,
     NoOpinion,
 }
@@ -138,7 +139,7 @@ impl Display for Decision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Decision::Allow => write!(f, "Decision::Allow"),
-            Decision::Conditional(policies) => write!(f, r#"Decision::Conditional: {policies}"#),
+            Decision::Conditional(policies, unknown_jsonpaths_to_uid) => write!(f, r#"Decision::Conditional: {policies} ({unknown_jsonpaths_to_uid:?})"#),
             Decision::Deny => write!(f, "Decision::Deny"),
             Decision::NoOpinion => write!(f, "Decision::NoOpinion"),
         }

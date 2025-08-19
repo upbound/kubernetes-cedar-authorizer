@@ -156,6 +156,7 @@ pub(super) fn with_connect_rewrites(
         // TODO: Probably these could be hard-coded for Kubernetes core, by them just magically "existing" prior to this
         // invocation. That way, custom integrators could also have their own "base", with typed params.
         // TODO: Connect resources never have an oldobject
+        // TODO: Just hardcode the built-in connect types for now; don't make this generic for aggregated API servers.
 
         if k8s_actions.contains(&"connect") {
             // sanity check the OpenAPI invariants

@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
 use cedar_policy_core::{
-    ast::{Eid, EntityType, EntityUID, InternalName, Name, Value},
+    ast::{Eid, EntityType, EntityUID, InternalName, Name, Value, Literal},
     tpe::entities::PartialEntity,
 };
 use smol_str::{SmolStr, ToSmolStr};
@@ -52,16 +52,10 @@ impl EntityBuilder {
         let entity_type = "meta::UnknownString".parse().unwrap();
         match optional_value {
             Some(value) => EntityBuilder::new()
-                .with_attr("value", Some(value))
+                .with_attr("value", Some(value.as_str()))
                 .build(entity_type),
             None => Self::build_unknown(entity_type),
         }
-    }
-
-    #[must_use]
-    pub(super) fn with_eid(mut self, eid: impl Into<SmolStr>) -> Self {
-        self.entity_eid = Some(Eid::new(eid));
-        self
     }
 
     #[must_use]
@@ -71,13 +65,15 @@ impl EntityBuilder {
     }
 
     pub(super) fn build_unknown(entity_type_name: Name) -> BuiltEntity {
+        let uid = EntityUID::from_components(
+            EntityType::EntityType(entity_type_name),
+            Eid::new(new_uuid().to_smolstr()),
+            None,
+        );
         BuiltEntity {
-            uid: EntityUID::from_components(
-                EntityType::EntityType(entity_type_name),
-                Eid::new(new_uuid().to_smolstr()),
-                None,
-            ),
+            uid: uid.clone(),
             entities: HashMap::new(),
+            unknown_jsonpaths_to_uid: HashMap::from([(String::new(), uid)]),
         }
     }
 
@@ -106,6 +102,7 @@ impl EntityBuilder {
         BuiltEntity {
             uid,
             entities: self.record_builder.entities,
+            unknown_jsonpaths_to_uid: self.record_builder.unknown_jsonpaths_to_uid,
         }
     }
 }
@@ -120,12 +117,34 @@ impl RecordBuilder for EntityBuilder {
 }
 
 pub trait IntoValueWithEntities {
-    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>);
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>);
 }
 
-impl<T: Into<Value>> IntoValueWithEntities for T {
-    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
-        (self.into(), std::iter::empty())
+
+// Instead of a blanket impl of impl<T: Into<Value>> IntoValueWithEntities for T, we have these specific impls for the types that are used in the authorizer.
+// The reason for this is to make sure that arbitrary values do not implement IntoValueWithEntities, as values could contain e.g.
+// EntityUIDs, that would mess things up with tracking the relation between jsonpaths and uids.
+impl IntoValueWithEntities for &str {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (self.into(), std::iter::empty(), std::iter::empty())
+    }
+}
+
+impl IntoValueWithEntities for SmolStr {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (Literal::String(self).into(), std::iter::empty(), std::iter::empty())
+    }
+}
+
+impl IntoValueWithEntities for bool {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (self.into(), std::iter::empty(), std::iter::empty())
+    }
+}
+
+impl IntoValueWithEntities for Vec<&str> {
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (Value::set_of_lits(self.into_iter().map(|s| s.into()), None), std::iter::empty(), std::iter::empty())
     }
 }
 
@@ -152,7 +171,7 @@ pub trait RecordBuilder: Sized {
             key,
             Some(
                 EntityBuilder::new()
-                    .with_string_set("keys", Some(map.keys().cloned()))
+                    .with_string_set("keys", Some(map.keys().map(|s| s.as_str())))
                     .with_tags(map.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
                     .build(MAP_STRINGSTRING.0.name()),
             ),
@@ -173,7 +192,7 @@ pub trait RecordBuilder: Sized {
             key,
             Some(
                 EntityBuilder::new()
-                    .with_string_set("keys", Some(map.keys().cloned()))
+                    .with_string_set("keys", Some(map.keys().map(|s| s.as_str())))
                     .with_tags( // TODO: If only one value, add a "first" attribute to the entity.
                         map.into_iter()
                             .map(|(k, v)| {
@@ -189,17 +208,17 @@ pub trait RecordBuilder: Sized {
         );
     }
 
-    fn add_string_set<K: Into<SmolStr>, V: IntoIterator<Item = String>>(
+    fn add_string_set<'a, K: Into<SmolStr>, V: IntoIterator<Item = &'a str>>(
         &mut self,
         key: K,
         set_option: Option<V>,
     ) {
         // Note: Sets are usually required in the schema, but can be empty, so fold None into an empty set.
-        let set: Vec<_> = match set_option {
-            Some(set) => set.into_iter().map(|s| s.into()).collect(),
+        let set_vec: Vec<&str> = match set_option {
+            Some(set) => set.into_iter().collect(),
             None => Vec::new(),
         };
-        self.add_attr(key, Some(Value::set_of_lits(set, None)));
+        self.add_attr(key, Some(set_vec));
     }
 
     fn add_metadata(&mut self, metadata_option: Option<&metav1::ObjectMeta>) {
@@ -210,8 +229,8 @@ pub trait RecordBuilder: Sized {
                     Some(EntityBuilder::new()
                         .with_string_to_string_map("labels", metadata.labels.as_ref())
                         .with_string_to_string_map("annotations", metadata.annotations.as_ref())
-                        .with_string_set("finalizers", metadata.finalizers.clone())
-                        .with_attr("uid", metadata.uid.clone())
+                        .with_string_set("finalizers", metadata.finalizers.as_ref().map(|s| s.iter().map(|s| s.as_str())))
+                        .with_attr("uid", metadata.uid.as_ref().map(|uid| uid.as_str()))
                         .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
                         .build(ENTITY_OBJECTMETA.name.name())),
                 None => Some(EntityBuilder::build_unknown_internal_name(ENTITY_OBJECTMETA.name.name().into())),
@@ -250,10 +269,10 @@ pub trait RecordBuilder: Sized {
     }
 
     #[must_use]
-    fn with_string_set<K: Into<SmolStr>>(
+    fn with_string_set<'a, K: Into<SmolStr>>(
         mut self,
         key: K,
-        set: Option<impl IntoIterator<Item = String>>,
+        set: Option<impl IntoIterator<Item = &'a str>>,
     ) -> Self {
         self.add_string_set(key, set);
         self
@@ -269,6 +288,7 @@ pub trait RecordBuilder: Sized {
 pub(super) struct RecordBuilderImpl {
     entity_attrs: Option<BTreeMap<SmolStr, Value>>,
     entities: HashMap<EntityUID, PartialEntity>,
+    unknown_jsonpaths_to_uid: HashMap<String, EntityUID>,
 }
 
 impl RecordBuilder for RecordBuilderImpl {
@@ -278,21 +298,21 @@ impl RecordBuilder for RecordBuilderImpl {
         optional_value: Option<V>,
     ) {
         if let Some(v) = optional_value {
-            let (value, entities) = v.into_value_with_entities();
-            // TODO: This overwrites any existing entities with the same UID, if present, but
-            // should not be a problem as long as we use the same constructor functions for entities
-            // that might be built several times. Namespace between ServiceAccount and k8s::Resource is an example.
+            let (value, entities, unknown_jsonpaths_to_uid) = v.into_value_with_entities();
+            let key_smolstr = key.into();
+            self.unknown_jsonpaths_to_uid.extend(add_level_to_unknown_jsonpaths(key_smolstr.as_str(), unknown_jsonpaths_to_uid));
+            // Note: There must be no duplicate UIDs in the entities, as we do not deduplicate them.
             self.entities.extend(entities);
             self.entity_attrs
                 .get_or_insert(BTreeMap::new())
-                .insert(key.into(), value.into());
+                .insert(key_smolstr, value.into());
         }
     }
 }
 
 impl IntoValueWithEntities for RecordBuilderImpl {
-    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
-        (Value::record(self.entity_attrs.unwrap_or_default(), None), self.entities.into_iter())
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (Value::record(self.entity_attrs.unwrap_or_default(), None), self.entities.into_iter(), self.unknown_jsonpaths_to_uid.into_iter())
     }
 }
 
@@ -301,6 +321,7 @@ impl RecordBuilderImpl {
         Self {
             entity_attrs: None,
             entities: HashMap::new(),
+            unknown_jsonpaths_to_uid: HashMap::new(),
         }
     }
 }
@@ -308,11 +329,12 @@ impl RecordBuilderImpl {
 pub(super) struct BuiltEntity {
     uid: EntityUID,
     entities: HashMap<EntityUID, PartialEntity>,
+    unknown_jsonpaths_to_uid: HashMap<String, EntityUID>,
 }
 
 impl IntoValueWithEntities for BuiltEntity {
-    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>) {
-        (self.uid.into(), self.entities.into_iter())
+    fn into_value_with_entities(self) -> (Value, impl IntoIterator<Item = (EntityUID, PartialEntity)>, impl IntoIterator<Item = (String, EntityUID)>) {
+        (self.uid.into(), self.entities.into_iter(), self.unknown_jsonpaths_to_uid.into_iter())
     }
 }
 
@@ -320,7 +342,10 @@ impl BuiltEntity {
     pub(super) fn uid(&self) -> &EntityUID {
         &self.uid
     }
-    pub(super) fn consume_entities(self) -> HashMap<EntityUID, PartialEntity> {
-        self.entities
+    pub(super) fn into_parts(self, toplevel_name: &str) -> (HashMap<EntityUID, PartialEntity>, HashMap<String, EntityUID>) {
+        (self.entities, add_level_to_unknown_jsonpaths(toplevel_name, self.unknown_jsonpaths_to_uid.clone()))
     }
+}
+fn add_level_to_unknown_jsonpaths(level_name: &str, unknown_jsonpaths_to_uid: impl IntoIterator<Item = (String, EntityUID)>) -> HashMap<String, EntityUID> {
+    unknown_jsonpaths_to_uid.into_iter().map(|(jsonpath, uid)| (format!("{}{}{}", level_name, if jsonpath.is_empty() { "" } else { "." }, jsonpath), uid)).collect()
 }

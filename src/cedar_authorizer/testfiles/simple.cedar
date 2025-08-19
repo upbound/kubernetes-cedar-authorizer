@@ -46,7 +46,7 @@ when
     resource.apiGroup == "" &&
     resource.resourceCombined == "pods" &&
     resource has namespace &&
-    resource.namespace == principal.namespace &&
+    resource.namespace.name == principal.serviceAccountNamespace &&
     resource.namespace.metadata.labels.hasTag("serviceaccounts-allowed") &&
     resource.namespace.metadata.labels.getTag("serviceaccounts-allowed") == "true"
 };
@@ -56,7 +56,7 @@ permit (
     action in [k8s::Action::"get", k8s::Action::"list", k8s::Action::"watch"],
     resource
 )
-when { resource.apiGroup == "" && resource.resourceCombined == "nodes" && resource.name == principal.name };
+when { resource.apiGroup == "" && resource.resourceCombined == "nodes" && resource.name == principal.nodeName };
 
 permit (
     principal is k8s::User,
@@ -92,4 +92,4 @@ permit (
     action == k8s::Action::"get",
     resource is core::pods
 )
-when { resource has stored && resource.stored has v1.spec && resource.stored.v1.spec.nodeName == principal.name };
+when { resource has stored && resource.stored has v1.spec && resource.stored.v1.spec.nodeName == principal.nodeName };

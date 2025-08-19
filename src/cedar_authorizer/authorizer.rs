@@ -1,14 +1,17 @@
+use cedar_policy_core::validator::json_schema::{CommonTypeId, NamespaceDefinition};
 use cedar_policy_core::validator::{json_schema, RawName};
 use k8s_openapi::api::core::v1 as corev1;
+use kube::core::GroupVersion;
 use kube::{self, Resource};
 use kube::runtime::reflector;
+use smol_str::SmolStr;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use cedar_policy_core::tpe::entities::PartialEntities;
 use cedar_policy_core::tpe::request::PartialRequest;
 
-use cedar_policy_core::ast::{Annotation, AnyId, EntityType, Id, InternalName, Name};
+use cedar_policy_core::ast::{Annotation, AnyId, EntityType, Id, InternalName, Name, UnreservedId};
 
 use crate::cedar_authorizer::kube_invariants::DetailedDecision;
 use crate::cedar_authorizer::kube_invariants::{self};
@@ -32,6 +35,24 @@ use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
 
 const API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse().unwrap());
 
+// TODO: When the k8s API server turns an update or patch into a create; it uses the authorizer to check whether the
+// create is allowed (unconditionally). It means that for a patch that is turned into a create:
+// 1. There is a SAR "can principal P patch resource R?"
+// 2. There is another SAR "can principal P create resource R?"
+// 3. There is an admission request of "can principal P create this specific resource R?"
+// If the step 1 is conditional, then step 3 will enforce the condition. But in order for step 2 to succeed as well
+// (for a Cedar policy "principal can create or patch resource R when spec.foo=bar"), we need to carry the context from the
+// authorizer to the admission controller from step 2 to 3 as well.
+// Apparently, e.g. RBAC objects, RuntimeClasses, and some similar, set Strategy.AllowCreateOnUpdate==true. Test this out in practice.
+
+// TODO: The webhook authorizer change for k8s upstream must use some context value to know whether the caller is capable of
+// enforcing the condition being returned. In other words, as the authorizer is used in multiple places, make sure that we don't
+// fold a "conditional" into an "allow", if the authorization caller cannot handle the special "conditional" responses.
+
+// TODO: It is possible to change metadata using a status subresource for some core APIs like Services, see
+// https://github.com/kubernetes/kubernetes/issues/45539. In this project, we could potentially (and optionally) tighten this
+// through a forbid rule that only allows some specific actors (like well-known core controllers) to change metadata.
+
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
@@ -41,7 +62,7 @@ pub struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>> {
     // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl<'a, S: KubeStore<corev1::Namespace>>
+impl<S: KubeStore<corev1::Namespace>>
     CedarKubeAuthorizer<S>
 {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
@@ -63,14 +84,14 @@ impl<'a, S: KubeStore<corev1::Namespace>>
 
         let mut entity_builder: EntityBuilder = EntityBuilder::new()
             .with_attr("username", Some(attrs.user.name.as_str()))
-            .with_string_set("groups", Some(attrs.user.groups.clone()))
+            .with_string_set("groups", Some(attrs.user.groups.iter().map(|s| s.as_str())))
             .with_attr(
                 "uid",
                 attrs
                     .user
                     .uid
                     .as_ref()
-                    .map(|uid| Into::<ast::Value>::into(uid.as_str())),
+                    .map(|uid| uid.as_str()),
             )
             .with_string_to_stringset_map("extra", Some(&attrs.user.extra));
 
@@ -85,8 +106,8 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                 ));
             }
 
-            entity_builder.add_attr("namespace", Some(self.namespace_entity(parts[0])?));
-            entity_builder.add_attr("name", Some(parts[1]));
+            entity_builder.add_attr("serviceAccountNamespace", Some(parts[0]));
+            entity_builder.add_attr("serviceAccountName", Some(parts[1]));
 
             principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
         } else if let Some(nodename) = attrs.user.name.strip_prefix("system:node:") {
@@ -98,7 +119,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             }
             principal_type = PRINCIPAL_NODE.name.name();
             // TODO: Add some validation here
-            entity_builder.add_attr("name", Some(nodename));
+            entity_builder.add_attr("nodeName", Some(nodename));
         }
 
         Ok(entity_builder.build(principal_type))
@@ -111,14 +132,10 @@ impl<'a, S: KubeStore<corev1::Namespace>>
         let stored_ns_metadata = stored_ns.as_ref().map(|ns| &ns.metadata);
         
         Ok(EntityBuilder::new()
-            // Note: We cannot block on the namespace being present in order allow for checks like
-            // "resource.namespace.name == 'foo'" or "principal.namespace == resource.namespace" to be resolvable.
-            // If the namespace is an exact match, the first expression evaluates correctly in TPE, even though
-            // the metadata is not present. In order to make the second expression also evaluate correctly,
-            // we let the namespace name define the entity ID. If we ever add more information that fully-qualifies
-            // the namespace, we need to update this to avoid conflicts.
-            .with_eid(ns_name)
+            // Note: resource.namespace.name is populated (if non-wildcard), although the namespace
+            // does not exist in Kubernetes, and thus no metadata is available (left unknown).
             .with_attr("name", Some(ns_name))
+            // TODO: Should this entity also have a deterministic UID; as 
             .with_metadata(match stored_ns_metadata {
                 Some(ns_metadata) => Some(ns_metadata),
                 None => None,
@@ -184,7 +201,7 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                     ) => match self
                         .find_schema_entity_for_api_group_and_resource(api_group, resource)
                     {
-                        Some((entity_type, resource_type)) => {
+                        Some(( resource_type_namespace_name, resource_type_namespace, typed_resource_entity_id, resource_type)) => {
                             let record = entity_to_record(&resource_type)?;
                             resource_builder.add_attr(
                                 "namespace",
@@ -205,66 +222,99 @@ impl<'a, S: KubeStore<corev1::Namespace>>
                                 },
                             );
 
-                            resource_builder.add_attr(
-                                "request",
-                                match record.attributes.get("request") {
-                                    Some(schema_request_attr) => match attrs.verb {
-                                        // In authorization, keep resource.request unknown for the verbs which
-                                        // carry request data.
-                                        Verb::Create
-                                        | Verb::Update
-                                        | Verb::Patch
-                                        | Verb::Connect => {
-                                            // TODO: Actually make this known, and populate the apiVersion & kind fields
-                                            // Keep metadata unknown, but also only populate one of the versioned fields.
-                                            Some(EntityBuilder::build_unknown_internal_name(
-                                                entity_ref_of_type(
-                                                    &schema_request_attr.ty,
-                                                    namespace_of_name(&entity_type).as_ref(),
-                                                )?,
-                                            ))
-                                        }
-                                        // For verbs that do not carry request data, make "resource has request" return false.
-                                        _ => None,
-                                    },
-                                    // If the type does not have a request, ok, don't add anything.
-                                    None => None,
-                                },
-                            );
+                            // TODO: Enforce all these invariants early on, instead of here (late).
+                            // In that case, we can guard against ever starting to consider a faulty schema and 
+                            // thus failing all authz requests.
+                            let kind = resource_type.annotations.0.get(&"kind".parse().unwrap()).into_iter().flatten().map(|a| a.val.clone()).next().ok_or_else(||AuthorizerError::UnexpectedSchemaShape("schema should have kind annotation registered at GVR resource entity".to_string()))?;
+                            
+                            match &resource_attrs.api_version {
+                                StarWildcardStringSelector::Exact(api_version) => {
+                                    let api_group_version: SmolStr = GroupVersion::gv(&api_group, api_version).api_version().into();
+                                    resource_builder.add_attr(
+                                        "request",
+                                        match record.attributes.get("request") {
+                                            Some(_) => match attrs.verb {
+                                                // In authorization, keep resource.request unknown for the verbs which
+                                                // carry request data.
+                                                Verb::Create
+                                                | Verb::Update
+                                                | Verb::Patch
+                                                | Verb::Connect => {
+                                                    let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
+                                                    .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
+                                                    let versioned_record = type_to_record(&versioned_record.ty)?;
+                                                    let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
 
-                            resource_builder.add_attr(
-                                "stored",
-                                match record.attributes.get("stored") {
-                                    Some(schema_request_attr) => match attrs.verb {
-                                        // In authorization, keep resource.request unknown for the verbs which
-                                        // carry request data.
-                                        // TODO: Do we get any stored data for connect verbs?
-                                        // TODO: Should we allow arbitrary verbs to operate conditionally?
-                                        // TODO: Actually make this known, and populate the apiVersion & kind fields
-                                        // Keep metadata unknown, but also only populate one of the versioned fields.
-                                        Verb::Get
-                                        | Verb::List
-                                        | Verb::Watch
-                                        | Verb::Update
-                                        | Verb::Patch
-                                        | Verb::Delete
-                                        | Verb::DeleteCollection => {
-                                            Some(EntityBuilder::build_unknown_internal_name(
-                                                entity_ref_of_type(
-                                                    &schema_request_attr.ty,
-                                                    namespace_of_name(&entity_type).as_ref(),
-                                                )?,
-                                            ))
-                                        }
-                                        // For verbs that do not carry request data, make "resource has request" return false.
-                                        _ => None,
-                                    },
-                                    // If the type does not have a stored value, ok, don't add anything.
-                                    None => None,
-                                },
-                            );
+                                                    Some(RecordBuilderImpl::new()
+                                                    .with_attr("apiVersion", Some(api_group_version.clone()))
+                                                    .with_attr("kind", Some(kind.clone()))
+                                                    // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
+                                                    .with_attr("metadata", match specific_version_attr {
+                                                        Some(_) => Some(EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())),
+                                                        None => None,
+                                                    })
+                                                    .with_attr(api_version.as_str(), match specific_version_attr {
+                                                        Some(_) => Some(EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(&api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))),
+                                                        None => None
+                                                    }))
+                                                }
+                                                // For verbs that do not carry request data, make "resource has request" return false.
+                                                _ => None,
+                                            },
+                                            // If the type does not have a request, ok, don't add anything.
+                                            None => None,
+                                        },
+                                    );
+        
+                                    resource_builder.add_attr(
+                                        "stored",
+                                        match record.attributes.get("stored") {
+                                            Some(_) => match attrs.verb {
+                                                // In authorization, keep resource.request unknown for the verbs which
+                                                // carry request data.
+                                                // TODO: Do we get any stored data for connect verbs?
+                                                // TODO: Should we allow arbitrary verbs to operate conditionally?
+                                                // TODO: Actually make this known, and populate the apiVersion & kind fields
+                                                // Keep metadata unknown, but also only populate one of the versioned fields.
+                                                Verb::Get
+                                                | Verb::List
+                                                | Verb::Watch
+                                                | Verb::Update
+                                                | Verb::Patch
+                                                | Verb::Delete
+                                                | Verb::DeleteCollection => {
+                                                    let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
+                                                    .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
+                                                    let versioned_record = type_to_record(&versioned_record.ty)?;
+                                                    let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
 
-                            Ok((resource_builder.build(entity_type), true))
+                                                    Some(RecordBuilderImpl::new()
+                                                    .with_attr("apiVersion", Some(api_group_version.clone()))
+                                                    .with_attr("kind", Some(kind.clone()))
+                                                    // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
+                                                    .with_attr("metadata", match specific_version_attr {
+                                                        Some(_) => Some(EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())),
+                                                        None => None,
+                                                    })
+                                                    .with_attr(api_version.as_str(), match specific_version_attr {
+                                                        Some(_) => Some(EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(&api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))),
+                                                        None => None
+                                                    }))
+                                                }
+                                                // For verbs that do not carry request data, make "resource has request" return false.
+                                                _ => None,
+                                            },
+                                            // If the type does not have a stored value, ok, don't add anything.
+                                            None => None,
+                                        },
+                                    );
+                                }
+                                // If the apiVersion is an any match, resource.stored and resource.request are nil, but unlike
+                                // the untyped case (k8s::Resource), the specific resource entity type is used (e.g. core::pods)
+                                StarWildcardStringSelector::Any => (),
+                            }
+
+                            Ok((resource_builder.build(Name::unqualified_name(typed_resource_entity_id).qualify_with_name(resource_type_namespace_name.as_ref())), true))
                         }
                         // Untyped k8s::Resource case, due to to the resource requested not being in the schema,
                         // e.g. due to discovery not being up to date, or the requested resource begin "virtual".
@@ -308,14 +358,13 @@ impl<'a, S: KubeStore<corev1::Namespace>>
         ))
     }
 
-    fn find_schema_entity_for_api_group_and_resource(
-        &self,
+    fn find_schema_entity_for_api_group_and_resource<'a>(
+        &'a self,
         api_group: &str,
         resource: &str,
-    ) -> Option<(Name, json_schema::EntityType<RawName>)> {
-        let schema = self.policies.schema();
+    ) -> Option<(&'a Option<Name>, &'a NamespaceDefinition<RawName>, UnreservedId, &'a json_schema::EntityType<RawName>)> {
 
-        let (ns_name, ns) = schema.get_fragment().0.iter().find(|(_, entity)| {
+        let (ns_name, ns) = self.policies.schema_ref().get_fragment().0.iter().find(|(_, entity)| {
             match entity.annotations.0.get(&API_GROUP_ANNOTATION) {
                 Some(api_group_annotation) => match api_group_annotation {
                     Some(Annotation { val, .. }) => val.as_str() == api_group,
@@ -325,17 +374,20 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             }
         })?;
 
-        let resource_cedar_compatible_name = resource.replace("/", "_");
+        // TODO: If unwrap is used, at least replace them all with an expect.
+        let resource_cedar_compatible_name = resource.replace("/", "_").parse::<UnreservedId>().unwrap();
         ns.entity_types
-            .iter()
-            .find(|(id, _)| id.to_string() == resource_cedar_compatible_name)
-            .map(|(id, entity_type)| {
+            .get(&resource_cedar_compatible_name)
+            .map(| entity_type| {
                 (
-                    Name::unqualified_name(id.clone()).qualify_with_name(ns_name.as_ref()),
-                    entity_type.clone(),
+                    ns_name,
+                    ns,
+                    resource_cedar_compatible_name,
+                    entity_type,
                 )
             })
     }
+
 
     // INVARIANT: verb is validated to exist in the schema already.
     fn is_authorized_for_action(
@@ -348,7 +400,9 @@ impl<'a, S: KubeStore<corev1::Namespace>>
         // a) the action is get, list, watch, create, update, patch, delete, deletecollection, and
         // b) the resource refers to a resource type in the schema.
 
+        // TODO: Unit-test the construct_principal/resource functions.
         let principal_entity = self.construct_principal(attrs)?;
+        // TODO: Derive typed_resource from the uid of the built entity.
         let (resource_entity, typed_resource) = self.construct_resource(attrs)?;
 
         let action_entity = if resource_entity
@@ -369,12 +423,14 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             self.policies.schema().as_ref().as_ref(),
         )?;
 
-        // Collect all entities into a single map; a chained iterator does not work, as
-        // that could yield duplicate entities (e.g. for namespace across ServiceAccount and k8s::Resource).
-        let mut deduplicated_entities = principal_entity.consume_entities();
-        deduplicated_entities.extend(resource_entity.consume_entities());
+        
+        let (principal_entities, principal_jsonpaths) = principal_entity.into_parts("principal");
+        let (resource_entities, resource_jsonpaths) = resource_entity.into_parts("resource");
+
+        // Note: There must be no duplicate UIDs in the entities, as we do not deduplicate them.
+        // As of writing, no such duplicate entities between principal and resource is known.
         let entities = PartialEntities::from_entities(
-            deduplicated_entities.into_iter(),
+            principal_entities.into_iter().chain(resource_entities.into_iter()),
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -387,9 +443,12 @@ impl<'a, S: KubeStore<corev1::Namespace>>
             // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
             // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
             // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
-            DetailedDecision::Conditional(condition) => {
+            DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid) => {
                 if typed_resource {
-                    DetailedDecision::Conditional(condition)
+                    DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid.into_iter()
+                        .chain(principal_jsonpaths.into_iter())
+                        .chain(resource_jsonpaths.into_iter())
+                        .collect())
                 } else {
                     DetailedDecision::NoOpinion
                 }
@@ -441,7 +500,7 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
                         DetailedDecision::Allow(permitted_policy_ids) => {
                             allowed_ids.extend(permitted_policy_ids.into_iter())
                         }
-                        DetailedDecision::Conditional(conditions) => {
+                        DetailedDecision::Conditional(conditions, _) => {
                             return Ok(Response::no_opinion().with_errors(errors).with_reason(
                                 Reason::not_unconditionally_allowed(action, &conditions),
                             ))
@@ -487,8 +546,8 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer
                             &action_str,
                             &forbidden_policy_ids,
                         ))),
-                    DetailedDecision::Conditional(conditional_policies) => {
-                        Ok(Response::conditional(conditional_policies))
+                    DetailedDecision::Conditional(conditional_policies, unknown_jsonpaths_to_uid) => {
+                        Ok(Response::conditional(conditional_policies, unknown_jsonpaths_to_uid))
                     }
                     DetailedDecision::NoOpinion => Ok(Response::no_opinion()
                         .with_reason(Reason::no_allow_policy_match(&action_str))),
@@ -564,13 +623,13 @@ fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Resu
 }
 
 // TODO: This should be upstreamed to cedar-policy-core.
-fn namespace_of_name(name: &Name) -> Option<Name> {
+/*fn namespace_of_name(name: &Name) -> Option<Name> {
     let internal_name = name.as_ref();
     match internal_name.namespace().as_str() {
         "" => None,
         namespace => Some(namespace.parse().unwrap()),
     }
-}
+}*/
 
 // TODO: Translate to connect verbs
 
@@ -578,24 +637,28 @@ fn entity_to_record(
     entity: &json_schema::EntityType<RawName>,
 ) -> Result<&json_schema::RecordType<RawName>, AuthorizerError> {
     match &entity.kind {
-        json_schema::EntityTypeKind::Standard(standard_type) => match &standard_type.shape.0 {
-            json_schema::Type::Type { ty, .. } => match ty {
-                json_schema::TypeVariant::Record(record) => Ok(record),
-                _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                    "Expected record type, got {entity:?}"
-                ))),
-            },
-            _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                "Expected record type, got {entity:?}"
-            ))),
-        },
+        json_schema::EntityTypeKind::Standard(standard_type) => type_to_record(&standard_type.shape.0),
         _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
             "Expected record type, got {entity:?}"
         ))),
     }
 }
 
-fn entity_ref_of_type(
+fn type_to_record(ty: &json_schema::Type<RawName>) -> Result<&json_schema::RecordType<RawName>, AuthorizerError> {
+    match ty {
+        json_schema::Type::Type { ty, .. } => match ty {
+            json_schema::TypeVariant::Record(record) => Ok(record),
+            _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
+                "Expected record type, got {ty:?}"
+            ))),
+        },
+        _ => Err(AuthorizerError::UnexpectedSchemaShape(format!(
+            "Expected record type, got {ty:?}"
+        ))),
+    }
+}
+
+/*fn entity_ref_of_type(
     main_ty: &json_schema::Type<RawName>,
     relevant_namespace: Option<&Name>,
 ) -> Result<InternalName, AuthorizerError> {
@@ -616,7 +679,7 @@ fn entity_ref_of_type(
         }
     };
     Ok(raw_name.qualify_with_name(relevant_namespace))
-}
+}*/
 
 mod test {
     use std::sync::Arc;
@@ -638,7 +701,7 @@ mod test {
         use k8s_openapi::api::core::v1 as corev1;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
-        use std::collections::BTreeMap;
+        use std::collections::{BTreeMap, HashMap};
         use std::str::FromStr;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
@@ -756,8 +819,13 @@ mod test {
     action,
     resource
 ) when {
-(((meta::V1ObjectMeta::"3dd67f29-eebf-407f-b239-acf94c137188"["labels"]).hasTag("serviceaccounts-allowed")) && (((meta::V1ObjectMeta::"3dd67f29-eebf-407f-b239-acf94c137188"["labels"]).getTag("serviceaccounts-allowed")) == "true"))
-};"#, Arc::new(schema.clone())).unwrap())),
+(((meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5"["labels"]).hasTag("serviceaccounts-allowed")) && (((meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5"["labels"]).getTag("serviceaccounts-allowed")) == "true"))
+};"#, Arc::new(schema.clone())).unwrap(), HashMap::from([
+    ("resource.name".to_string(), r#"meta::UnknownString::"222fa568-eb07-411c-a6ff-b6eab75392dc""#.parse().unwrap()),
+    ("resource.namespace.metadata".to_string(), r#"meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5""#.parse().unwrap()),
+    ("resource.stored.v1".to_string(), r#"core::V1Pod::"03600274-f607-4061-8080-fb1f7adc63a4""#.parse().unwrap()),
+    ("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"9c869675-8159-4f4d-b8c0-2173efe8142b""#.parse().unwrap()),
+]))),
             ("anonymous user can get openapi v2",
             AttributesBuilder::nonresource("system:anonymous", Verb::Get,
                 StarWildcardStringSelector::Exact("/openapi/v2".to_string()))
@@ -793,7 +861,7 @@ mod test {
             ("a node can get pods in the foo namespace",
             AttributesBuilder::resource("system:node:node-1", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
-                    StarWildcardStringSelector::Any,
+                    StarWildcardStringSelector::Exact("v1".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
                     EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Exact("pod-abc".to_string()))
@@ -802,8 +870,11 @@ mod test {
   action,
   resource
 ) when {
-  (((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829" has "v1") && ((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829"["v1"]) has "spec")) && ((((core::VersionedPod::"15ce042c-c015-4ef4-a0e6-59df2b478829"["v1"])["spec"])["nodeName"]) == "node-1"))
-};"#, Arc::new(schema.clone())).unwrap())),
+  ((core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8" has "spec") && ((((core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8")["spec"])["nodeName"]) == "node-1"))
+};"#, Arc::new(schema.clone())).unwrap(), HashMap::from([
+    ("resource.stored.v1".to_string(), r#"core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8""#.parse().unwrap()),
+    ("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"b7b65842-3d3a-48a8-8239-0f48010c1867""#.parse().unwrap()),
+]))),
             ("lucas can get pods in the notinstorage namespace",
             AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
