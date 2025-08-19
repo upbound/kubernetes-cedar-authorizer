@@ -102,10 +102,7 @@ impl Verb {
     // caching, logging, and other incidentals.
     pub fn is_read_only(&self) -> bool {
         // As per Kubernetes upstream impl.
-        match self {
-            Verb::Get | Verb::List | Verb::Watch => true,
-            _ => false,
-        }
+        matches!(self, Verb::Get | Verb::List | Verb::Watch)
     }
 
     pub fn supports_selectors(&self) -> bool {
@@ -242,11 +239,10 @@ impl CombinedResource {
     }
 
     pub fn concrete(&self) -> bool {
-        match self {
-            CombinedResource::ResourceOnly { .. } => true,
-            CombinedResource::ResourceSubresource { .. } => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            CombinedResource::ResourceOnly { .. } | CombinedResource::ResourceSubresource { .. }
+        )
     }
 }
 

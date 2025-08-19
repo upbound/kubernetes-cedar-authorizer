@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::thread;
 use std::{hash::Hash, sync::Arc};
 
 use kube::api::ApiResource;
@@ -94,7 +93,7 @@ where
         Self { store }
     }
 }
-
+/*
 pub trait KubeDiscovery<G: KubeApiGroup> {
     fn get_api_group(&self, group: &str) -> Option<&G>;
 }
@@ -146,3 +145,4 @@ impl KubeApiGroup for TestKubeApiGroup {
         self.recommended_groups_resources.clone()
     }
 }
+*/

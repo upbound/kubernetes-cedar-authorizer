@@ -4,22 +4,18 @@ use axum::{
     Router,
 };
 use itertools::Itertools;
-use kube;
-use kube::runtime::{reflector, watcher};
 use kubernetes_cedar_authorizer::{
-    cedar_authorizer::{self, kube_invariants, kubestore::KubeStoreImpl},
+    cedar_authorizer::{self, kubestore::KubeStoreImpl},
     k8s_authorizer::{self, KubernetesAuthorizer},
 };
 
 use axum_server::tls_rustls::RustlsConfig;
-use cedar_authorizer::kubestore::TestKubeStore;
 use cedar_policy::PolicySet;
 use k8s_openapi::api::{
     authorization::v1::{SubjectAccessReview, SubjectAccessReviewStatus},
     core::v1 as corev1,
 };
-use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +25,7 @@ use std::net::SocketAddr;
 use tracing::{error, instrument};
 
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_sdk::{logs::SdkLoggerProvider, trace::SdkTracerProvider};
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
 #[tokio::main]
@@ -226,56 +222,54 @@ async fn authorize_handler(
     });
     let mut review = SubjectAccessReview { status, ..review };
     // TODO: Handle generateName precision; we cannot do an exact match, but we can do a prefix match.
-    match is_authorized.decision {
-        k8s_authorizer::Decision::Conditional(policies, jsonpaths_to_uid) => {
-            let uid_to_celvar = jsonpaths_to_uid.into_iter().map(|(jsonpath, uid)| {
-                (
-                    uid,
-                    match jsonpath.as_str() {
-                        "resource.namespace.metadata" => "namespaceObject.metadata".to_string(),
-                        "resource.namespace" => "namespaceObject".to_string(),
-                        "resource.request.metadata" => "object.metadata".to_string(),
-                        "resource.stored.metadata" => "oldObject.metadata".to_string(),
-                        _ => match (
-                            jsonpath.strip_prefix("resource.request.v"),
-                            jsonpath.strip_prefix("resource.stored.v"),
-                        ) {
-                            (Some(_), None) => "object".to_string(),
-                            (None, Some(_)) => "oldObject".to_string(),
-                            _ => jsonpath,
-                        },
+    if let k8s_authorizer::Decision::Conditional(policies, jsonpaths_to_uid) =
+        is_authorized.decision
+    {
+        let uid_to_celvar = jsonpaths_to_uid.into_iter().map(|(jsonpath, uid)| {
+            (
+                uid,
+                match jsonpath.as_str() {
+                    "resource.namespace.metadata" => "namespaceObject.metadata".to_string(),
+                    "resource.namespace" => "namespaceObject".to_string(),
+                    "resource.request.metadata" => "object.metadata".to_string(),
+                    "resource.stored.metadata" => "oldObject.metadata".to_string(),
+                    _ => match (
+                        jsonpath.strip_prefix("resource.request.v"),
+                        jsonpath.strip_prefix("resource.stored.v"),
+                    ) {
+                        (Some(_), None) => "object".to_string(),
+                        (None, Some(_)) => "oldObject".to_string(),
+                        _ => jsonpath,
                     },
-                )
-            });
-            let fixup_mappings = HashMap::from([
-                (
-                    "resource.name.value".to_string(),
-                    "request.name".to_string(),
-                ),
-                // TODO: Figure out if how to deal with implicit conversions from e.g. v1beta1 deployments to v1 deployments
-                // That is the difference between CEL's request.requestResource and request.resource
-                (
-                    "resource.apiGroup.value".to_string(),
-                    "request.requestResource.group".to_string(),
-                ),
-                // TODO: Split resourceCombined into resource and subresource
-                (
-                    "namespaceObject.name".to_string(),
-                    "namespaceObject.metadata.name".to_string(),
-                ),
-            ]);
-            let mut entity_uid_mapper =
-                cedar_authorizer::cel::DefaultEntityToCelVariableMapper::new(uid_to_celvar);
-            let cel_conditions =
-                cedar_authorizer::kube_invariants::AuthorizationConditions::from_policy_set(
-                    &policies,
-                    &mut entity_uid_mapper,
-                )?;
-            let cel_conditions =
-                cel_conditions.map_cel_exprs(|c| c.rename_variables(&fixup_mappings));
-            cel_conditions.apply_to_subject_access_review(&mut review)?;
-        }
-        _ => (),
+                },
+            )
+        });
+        let fixup_mappings = HashMap::from([
+            (
+                "resource.name.value".to_string(),
+                "request.name".to_string(),
+            ),
+            // TODO: Figure out if how to deal with implicit conversions from e.g. v1beta1 deployments to v1 deployments
+            // That is the difference between CEL's request.requestResource and request.resource
+            (
+                "resource.apiGroup.value".to_string(),
+                "request.requestResource.group".to_string(),
+            ),
+            // TODO: Split resourceCombined into resource and subresource
+            (
+                "namespaceObject.name".to_string(),
+                "namespaceObject.metadata.name".to_string(),
+            ),
+        ]);
+        let mut entity_uid_mapper =
+            cedar_authorizer::cel::DefaultEntityToCelVariableMapper::new(uid_to_celvar);
+        let cel_conditions =
+            cedar_authorizer::kube_invariants::AuthorizationConditions::from_policy_set(
+                &policies,
+                &mut entity_uid_mapper,
+            )?;
+        let cel_conditions = cel_conditions.map_cel_exprs(|c| c.rename_variables(&fixup_mappings));
+        cel_conditions.apply_to_subject_access_review(&mut review)?;
     }
     Ok(Json(review))
 }

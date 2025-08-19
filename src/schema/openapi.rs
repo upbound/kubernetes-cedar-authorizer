@@ -107,9 +107,7 @@ impl GroupVersionedOpenAPIType {
     // io.k8s.networking.gateway => Reversed API group for CRDs, for gateway.networking.k8s.io
     // TODO: Handle io.k8s.kube-aggregator.pkg.apis
     // TODO special case for API extensions?
-    pub(crate) fn from_component_name<'a>(
-        component_name: &str,
-    ) -> Result<GroupVersionedOpenAPIType> {
+    pub(crate) fn from_component_name(component_name: &str) -> Result<GroupVersionedOpenAPIType> {
         let parts: Vec<&str> = component_name.split('.').rev().collect();
         if parts.len() < 4 {
             return Err(SchemaProcessingError::OpenAPI(

@@ -4,8 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::cedar_authorizer::cel::{cedar_to_cel, DefaultEntityToCelVariableMapper};
-
 use cedar_policy_core::{
     ast::{self, Expr, ExprKind, Var},
     tpe::{
@@ -165,7 +163,7 @@ impl PolicySet {
                 Self::expr_has_in_k8s_resource(arg1) || Self::expr_has_in_k8s_resource(arg2)
             }
             ExprKind::ExtensionFunctionApp { args, .. } => {
-                args.iter().any(|a| Self::expr_has_in_k8s_resource(a))
+                args.iter().any(Self::expr_has_in_k8s_resource)
             }
             ExprKind::GetAttr { expr, .. } => Self::expr_has_in_k8s_resource(expr),
             ExprKind::HasAttr { expr, .. } => Self::expr_has_in_k8s_resource(expr),
@@ -333,7 +331,7 @@ impl PolicySet {
             .filter(|id| matches!(res.get_residual(id).unwrap(), Residual::Error(_)))
             .cloned()
             .collect::<Vec<_>>();
-        if erroring_forbids.len() > 0 {
+        if !erroring_forbids.is_empty() {
             return Err(EarlyEvaluationError::PolicyCouldError(erroring_forbids));
         }
 
@@ -391,20 +389,20 @@ fn debug_entity(entity: PartialEntity) {
             .attrs
             .unwrap_or_default()
             .iter()
-            .map(|(k, v)| (k.clone().into(), v.clone().into())),
+            .map(|(k, v)| (k.clone(), v.clone().into())),
         HashSet::new(),
         entity
             .ancestors
             .unwrap_or_default()
             .iter()
-            .map(|uid| uid.clone().into())
+            .cloned()
             .collect(),
         entity
             .tags
             .unwrap_or_default()
             .iter()
-            .map(|(k, v)| (k.clone().into(), v.clone().into())),
-        &cedar_policy_core::extensions::Extensions::all_available(),
+            .map(|(k, v)| (k.clone(), v.clone().into())),
+        cedar_policy_core::extensions::Extensions::all_available(),
     ) {
         Ok(entity) => match entity.to_json_value() {
             Ok(s) => println!("{}", serde_json::to_string_pretty(&s).unwrap()),

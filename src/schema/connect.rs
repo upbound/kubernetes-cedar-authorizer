@@ -250,16 +250,12 @@ pub(super) fn with_connect_rewrites(
                     )
                 })?;
             match &mut versionlist_type.ty {
-                Type::Type { ty, .. } => match ty {
-                    TypeVariant::Record(rt) => {
-                        rt.attributes.remove("metadata");
-                    }
-                    _ => {
-                        return Err(SchemaProcessingError::Unknown(
-                            "expected versionlist to be a record".to_string(),
-                        ))
-                    }
-                },
+                Type::Type {
+                    ty: TypeVariant::Record(rt),
+                    ..
+                } => {
+                    rt.attributes.remove("metadata");
+                }
                 _ => {
                     return Err(SchemaProcessingError::Unknown(
                         "expected versionlist to be a record".to_string(),

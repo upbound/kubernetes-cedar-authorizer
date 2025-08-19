@@ -181,16 +181,16 @@ pub fn with_kubernetes_groupversion(
 
         // The same resource, e.g. horizontalpodautoscalers, might exist in multiple versions (v1 and v2).
         // Add both versions to the schema
-        if let Type::Type { ty, .. } = &mut payload_versionlist_type.ty {
-            if let TypeVariant::Record(record) = ty {
-                record.attributes.insert(
-                    payload_gv.version.as_str().into(),
-                    TypeWrapper::CommonRef(
-                        versioned_payload_openapi_type.cedar_type_name.full_name(),
-                    )
+        if let Type::Type {
+            ty: TypeVariant::Record(record),
+            ..
+        } = &mut payload_versionlist_type.ty
+        {
+            record.attributes.insert(
+                payload_gv.version.as_str().into(),
+                TypeWrapper::CommonRef(versioned_payload_openapi_type.cedar_type_name.full_name())
                     .optional(),
-                );
-            }
+            );
         }
 
         // TODO: Create payload_cedar_entity and dependents here from OpenAPI schema

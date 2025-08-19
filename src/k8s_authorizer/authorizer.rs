@@ -5,7 +5,6 @@ use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStri
 
 use super::err::ParseError;
 use crate::cedar_authorizer::kube_invariants;
-use cedar_policy_symcc::type_abbrevs::Attr;
 use k8s_openapi::api::authorization::v1::SubjectAccessReview;
 
 use super::attributes::{Attributes, ResourceAttributes, UserInfo, Verb};

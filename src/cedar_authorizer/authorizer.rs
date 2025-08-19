@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use cedar_policy_core::tpe::entities::PartialEntities;
 use cedar_policy_core::tpe::request::PartialRequest;
 
-use cedar_policy_core::ast::{Annotation, AnyId, EntityType, Id, InternalName, Name, UnreservedId};
+use cedar_policy_core::ast::{Annotation, AnyId, Name, UnreservedId};
 
 use crate::cedar_authorizer::kube_invariants::DetailedDecision;
 use crate::cedar_authorizer::kube_invariants::{self};
@@ -25,15 +25,12 @@ use crate::schema::core::{
     ENTITY_NAMESPACE, ENTITY_OBJECTMETA, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
     PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
-use kube::discovery::Scope;
-
-use cedar_policy_core::ast;
 
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder, RecordBuilderImpl};
 use super::kube_invariants::SchemaError;
-use super::kubestore::{KubeApiGroup, KubeDiscovery, KubeStore};
+use super::kubestore::KubeStore;
 
-const API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse().unwrap());
+static API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse().unwrap());
 
 // TODO: When the k8s API server turns an update or patch into a create; it uses the authorizer to check whether the
 // create is allowed (unconditionally). It means that for a patch that is turned into a create:
@@ -80,7 +77,7 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
         let mut entity_builder: EntityBuilder = EntityBuilder::new()
             .with_attr("username", Some(attrs.user.name.as_str()))
             .with_string_set("groups", Some(attrs.user.groups.iter().map(|s| s.as_str())))
-            .with_attr("uid", attrs.user.uid.as_ref().map(|uid| uid.as_str()))
+            .with_attr("uid", attrs.user.uid.as_deref())
             .with_string_to_stringset_map("extra", Some(&attrs.user.extra));
 
         let mut principal_type = PRINCIPAL_USER.name.name();
@@ -193,7 +190,7 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                             typed_resource_entity_id,
                             resource_type,
                         )) => {
-                            let record = entity_to_record(&resource_type)?;
+                            let record = entity_to_record(resource_type)?;
                             resource_builder.add_attr(
                                 "namespace",
                                 match &resource_attrs.namespace {
@@ -221,7 +218,7 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                             match &resource_attrs.api_version {
                                 StarWildcardStringSelector::Exact(api_version) => {
                                     let api_group_version: SmolStr =
-                                        GroupVersion::gv(&api_group, api_version)
+                                        GroupVersion::gv(api_group, api_version)
                                             .api_version()
                                             .into();
                                     resource_builder.add_attr(
@@ -243,14 +240,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
                                                     .with_attr("kind", Some(kind.clone()))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
-                                                    .with_attr("metadata", match specific_version_attr {
-                                                        Some(_) => Some(EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())),
-                                                        None => None,
-                                                    })
-                                                    .with_attr(api_version.as_str(), match specific_version_attr {
-                                                        Some(_) => Some(EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(&api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))),
-                                                        None => None
-                                                    }))
+                                                    .with_attr("metadata", specific_version_attr.map(|_| EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())))
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref())))))
                                                 }
                                                 // For verbs that do not carry request data, make "resource has request" return false.
                                                 _ => None,
@@ -286,14 +277,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
                                                     .with_attr("kind", Some(kind.clone()))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
-                                                    .with_attr("metadata", match specific_version_attr {
-                                                        Some(_) => Some(EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())),
-                                                        None => None,
-                                                    })
-                                                    .with_attr(api_version.as_str(), match specific_version_attr {
-                                                        Some(_) => Some(EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(&api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))),
-                                                        None => None
-                                                    }))
+                                                    .with_attr("metadata", specific_version_attr.map(|_| EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())))
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref())))))
                                                 }
                                                 // For verbs that do not carry request data, make "resource has request" return false.
                                                 _ => None,
@@ -376,11 +361,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                 .iter()
                 .find(
                     |(_, entity)| match entity.annotations.0.get(&API_GROUP_ANNOTATION) {
-                        Some(api_group_annotation) => match api_group_annotation {
-                            Some(Annotation { val, .. }) => val.as_str() == api_group,
-                            None => false,
-                        },
-                        None => false,
+                        Some(Some(Annotation { val, .. })) => val.as_str() == api_group,
+                        _ => false,
                     },
                 )?;
 
@@ -453,8 +435,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                         condition,
                         unknown_jsonpaths_to_uid
                             .into_iter()
-                            .chain(principal_jsonpaths.into_iter())
-                            .chain(resource_jsonpaths.into_iter())
+                            .chain(principal_jsonpaths)
+                            .chain(resource_jsonpaths)
                             .collect(),
                     )
                 } else {
@@ -695,13 +677,11 @@ fn type_to_record(
 }*/
 
 mod test {
-    use std::sync::Arc;
-
-    use crate::cedar_authorizer::kube_invariants;
 
     #[test]
     fn test_is_authorized() {
-        use super::super::kubestore::{TestKubeApiGroup, TestKubeDiscovery, TestKubeStore};
+        use super::super::kubestore::TestKubeStore;
+        use crate::cedar_authorizer::kube_invariants;
         use crate::k8s_authorizer::test_utils::AttributesBuilder;
         use crate::k8s_authorizer::Selector;
         use crate::k8s_authorizer::{
@@ -716,6 +696,7 @@ mod test {
         use kube::discovery::{ApiCapabilities, ApiResource, Scope};
         use std::collections::{BTreeMap, HashMap};
         use std::str::FromStr;
+        use std::sync::Arc;
 
         let policies = PolicySet::from_str(include_str!("testfiles/simple.cedar")).unwrap();
         let (schema, _) = Fragment::from_cedarschema_str(

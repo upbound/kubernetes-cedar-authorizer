@@ -1,9 +1,6 @@
+use std::collections::{BTreeMap, HashMap};
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
 
 use cedar_policy_core::{
     ast::{Eid, EntityType, EntityUID, InternalName, Literal, Name, Value},
@@ -277,7 +274,7 @@ pub trait RecordBuilder: Sized {
                                 .as_ref()
                                 .map(|s| s.iter().map(|s| s.as_str())),
                         )
-                        .with_attr("uid", metadata.uid.as_ref().map(|uid| uid.as_str()))
+                        .with_attr("uid", metadata.uid.as_deref())
                         .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
                         .build(ENTITY_OBJECTMETA.name.name()),
                 ),
@@ -359,7 +356,7 @@ impl RecordBuilder for RecordBuilderImpl {
             self.entities.extend(entities);
             self.entity_attrs
                 .get_or_insert(BTreeMap::new())
-                .insert(key_smolstr, value.into());
+                .insert(key_smolstr, value);
         }
     }
 }

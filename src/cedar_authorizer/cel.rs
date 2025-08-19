@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use cel::{Context, Program, Value as CelValue};
-
 use cedar_policy_core::ast as cedar_ast;
-use cel::parser::{ast as cel_ast, reference::Val as CelVal};
+use cel::parser::ast as cel_ast;
 use cel::IdedExpr as CelIdedExpr;
 use itertools::Itertools;
 
@@ -130,10 +128,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 // Could maybe also use the extension function "contains" instead of "in"
                 let set = cedar_to_cel(arg1, entity_uid_mapper)?;
                 let val = cedar_to_cel(arg2, entity_uid_mapper)?;
-                Ok(CELExpression::new_unchecked(format!(
-                    "({} in {})",
-                    val, set
-                )))
+                Ok(CELExpression::new_unchecked(format!("({val} in {set})")))
             }
             cedar_ast::BinaryOp::ContainsAll => {
                 // The Cedar containsAll function "evaluates to true if every member of the operand set is a member of the receiver set.""
@@ -142,8 +137,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 let subset = cedar_to_cel(arg2, entity_uid_mapper)?;
                 // TODO: What happens if the i variable is already used somewhere else in the scope?
                 Ok(CELExpression::new_unchecked(format!(
-                    "{}.all(i, i in {})",
-                    subset, superset
+                    "{subset}.all(i, i in {superset})"
                 )))
             }
             cedar_ast::BinaryOp::ContainsAny => {
@@ -153,8 +147,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
                 let subset = cedar_to_cel(arg2, entity_uid_mapper)?;
 
                 Ok(CELExpression::new_unchecked(format!(
-                    "{}.exists(i, i in {})",
-                    subset, superset
+                    "{subset}.exists(i, i in {superset})"
                 )))
             }
             cedar_ast::BinaryOp::Eq => Ok(CELExpression::new_unchecked(format!(
@@ -164,7 +157,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
             ))),
             cedar_ast::BinaryOp::GetTag => todo!(),
             cedar_ast::BinaryOp::HasTag => todo!(),
-            cedar_ast::BinaryOp::In => Err(CedarToCelError::UnsupportedOperator(op.clone())),
+            cedar_ast::BinaryOp::In => Err(CedarToCelError::UnsupportedOperator(*op)),
             cedar_ast::BinaryOp::Less => Ok(CELExpression::new_unchecked(format!(
                 "({} < {})",
                 cedar_to_cel(arg1, entity_uid_mapper)?,
@@ -182,12 +175,12 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
         cedar_ast::ExprKind::GetAttr { expr, attr } => Ok(CELExpression::new_unchecked(format!(
             "{}.{}",
             cedar_to_cel(expr, entity_uid_mapper)?,
-            attr.to_string()
+            attr
         ))),
         cedar_ast::ExprKind::HasAttr { expr, attr } => Ok(CELExpression::new_unchecked(format!(
             "has({}.{})",
             cedar_to_cel(expr, entity_uid_mapper)?,
-            attr.to_string()
+            attr
         ))),
 
         cedar_ast::ExprKind::If {
@@ -299,7 +292,7 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
         cedar_ast::ExprKind::Var(var) => Ok(CELExpression::new_unchecked(var.to_string())),
         cedar_ast::ExprKind::Lit(lit) => Ok(match lit {
             cedar_ast::Literal::Bool(b) => CELExpression::new_unchecked(b.to_string()),
-            cedar_ast::Literal::String(s) => CELExpression::new_unchecked(format!("'{}'", s)),
+            cedar_ast::Literal::String(s) => CELExpression::new_unchecked(format!("'{s}'")),
             cedar_ast::Literal::Long(l) => CELExpression::new_unchecked(l.to_string()),
             cedar_ast::Literal::EntityUID(uid) => {
                 CELExpression::new_unchecked(entity_uid_mapper.cel_identifier_for_entity(uid))
@@ -311,12 +304,10 @@ pub fn cedar_to_cel<M: EntityToCelVariableMapper>(
 }
 
 mod test {
-    use std::str::FromStr;
-
-    use serde_json::json;
-
     #[test]
     fn test_cel_expression() {
+        use serde_json::json;
+
         /*let program = cel_interpreter::Program::compile(
         r#"has(resource.stored.v1) && has(resource.stored.v1.spec) && resource.stored.v1.spec.nodeName == "node-1""#)
         .unwrap();*/
@@ -406,7 +397,7 @@ mod test {
             ),
         ];
         for (cedar_expr, wanted_cel_expr) in tests {
-            let cedar_expr = cedar_ast::Expr::from_str(cedar_expr).unwrap();
+            let cedar_expr: cedar_ast::Expr = cedar_expr.parse().unwrap();
             let mut entity_uid_mapper = super::DefaultEntityToCelVariableMapper::new([]);
             let cel_expr = super::cedar_to_cel(&cedar_expr, &mut entity_uid_mapper).unwrap();
             assert_eq!(cel_expr.as_str(), wanted_cel_expr);
