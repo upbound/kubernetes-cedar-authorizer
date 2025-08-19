@@ -4,7 +4,7 @@ use cedar_policy_core::tpe::err::TPEError;
 #[derive(Debug, thiserror::Error)]
 pub enum SchemaError {
     #[error(transparent)]
-    SchemaError(#[from] cedar_policy_core::validator::SchemaError),
+    SchemaError(Box<cedar_policy_core::validator::SchemaError>),
     #[error(transparent)]
     PolicySetError(#[from] cedar_policy_core::ast::PolicySetError),
     #[error("Schema rewrite error: {0}")]
@@ -29,4 +29,10 @@ pub enum EarlyEvaluationError {
     PolicyCouldError(Vec<ast::PolicyID>),
     #[error("TPE error: {0}")]
     TPEError(#[from] TPEError),
+}
+
+impl From<cedar_policy_core::validator::SchemaError> for SchemaError {
+    fn from(errors: cedar_policy_core::validator::SchemaError) -> Self {
+        SchemaError::SchemaError(Box::new(errors))
+    }
 }

@@ -6,13 +6,13 @@ pub enum AuthorizerError {
     InvalidPrincipal(String, String),
 
     #[error(transparent)]
-    ParseErrors(#[from] cedar_policy_core::parser::err::ParseErrors),
+    ParseErrors(Box<cedar_policy_core::parser::err::ParseErrors>),
     #[error(transparent)]
-    RequestValidationError(#[from] cedar_policy_core::validator::RequestValidationError),
+    RequestValidationError(Box<cedar_policy_core::validator::RequestValidationError>),
     #[error(transparent)]
     TPEError(#[from] cedar_policy_core::tpe::err::TPEError),
     #[error(transparent)]
-    EntitiesError(#[from] cedar_policy_core::tpe::err::EntitiesError),
+    EntitiesError(Box<cedar_policy_core::tpe::err::EntitiesError>),
     #[error("No Kubernetes namespace found in schema")]
     NoKubernetesNamespace,
     #[error(transparent)]
@@ -28,6 +28,24 @@ pub enum AuthorizerError {
     CedarToCelError(#[from] crate::cedar_authorizer::cel::CedarToCelError),
     #[error(transparent)]
     SerdeJsonError(#[from] serde_json::Error),
+}
+
+impl From<cedar_policy_core::parser::err::ParseErrors> for AuthorizerError {
+    fn from(errors: cedar_policy_core::parser::err::ParseErrors) -> Self {
+        AuthorizerError::ParseErrors(Box::new(errors))
+    }
+}
+
+impl From<cedar_policy_core::validator::RequestValidationError> for AuthorizerError {
+    fn from(errors: cedar_policy_core::validator::RequestValidationError) -> Self {
+        AuthorizerError::RequestValidationError(Box::new(errors))
+    }
+}
+
+impl From<cedar_policy_core::tpe::err::EntitiesError> for AuthorizerError {
+    fn from(errors: cedar_policy_core::tpe::err::EntitiesError) -> Self {
+        AuthorizerError::EntitiesError(Box::new(errors))
+    }
 }
 
 impl axum::response::IntoResponse for AuthorizerError {

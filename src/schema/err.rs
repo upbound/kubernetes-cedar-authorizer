@@ -17,10 +17,16 @@ pub enum SchemaProcessingError {
     Unknown(String),
 
     #[error("Cedar schema error: {0}")]
-    CedarSchema(#[from] ParseErrors),
+    CedarSchema(Box<ParseErrors>),
 
     #[error("Reserved common type base name error: {0}")]
     ReservedCommonTypeBaseName(#[from] ReservedCommonTypeBasenameError),
 }
 
 pub type Result<T> = std::result::Result<T, SchemaProcessingError>;
+
+impl From<ParseErrors> for SchemaProcessingError {
+    fn from(errors: ParseErrors) -> Self {
+        SchemaProcessingError::CedarSchema(Box::new(errors))
+    }
+}

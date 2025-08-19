@@ -3,7 +3,7 @@ use cedar_policy_core::validator::{json_schema, RawName};
 use k8s_openapi::api::core::v1 as corev1;
 use kube::core::GroupVersion;
 use kube::runtime::reflector;
-use kube::{self, Resource};
+use kube::{self};
 use smol_str::SmolStr;
 use std::collections::HashSet;
 use std::sync::LazyLock;
