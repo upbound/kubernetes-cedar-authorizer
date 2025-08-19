@@ -48,3 +48,63 @@ pub use err::*;
 pub use policyset::PolicySet;
 pub use residual::{DetailedDecision, PartialResponseNew};
 pub use schema::Schema;
+
+use cedar_policy_core::ast;
+use serde::{Deserialize, Serialize};
+use k8s_openapi::api::authorization::v1::SubjectAccessReview;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AuthorizationConditions(pub Vec<AuthorizationCELCondition>);
+
+pub const CONDITIONAL_AUTHORIZATION_CONDITIONS_ANNOTATION: &str = "kubernetes.io/SubjectAccessReviewConditions";
+
+impl AuthorizationConditions {
+  pub fn from_policy_set<M: super::cel::EntityToCelVariableMapper>(policy_set: &super::kube_invariants::PolicySet, entity_uid_mapper: &mut M) -> Result<Self, super::cel::CedarToCelError> {
+    let cel_conditions = policy_set.as_ref().policies().map(|p| AuthorizationCELCondition::new_from_policy(p, entity_uid_mapper)).collect::<Result<Vec<_>, _>>()?;
+    Ok(Self(cel_conditions))
+  }
+  pub fn apply_to_subject_access_review(&self, sar: &mut SubjectAccessReview) -> Result<(), serde_json::Error> {
+    sar.metadata.annotations.get_or_insert_default().insert(CONDITIONAL_AUTHORIZATION_CONDITIONS_ANNOTATION.to_string(), serde_json::to_string(self)?);
+    Ok(())
+  }
+  pub fn map_cel_exprs<F: Fn(&super::cel::CELExpression) -> super::cel::CELExpression>(&self, f: F) -> Self {
+    Self(self.0.iter().map(|c| c.map_cel_expr(&f)).collect())
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorizationCELCondition {
+    pub id: ast::PolicyID,
+    pub condition: super::cel::CELExpression,
+    pub effect: AuthorizationCELConditionEffect,
+}
+
+impl AuthorizationCELCondition {
+  pub fn new(id: ast::PolicyID, condition: super::cel::CELExpression, effect: ast::Effect) -> Self {
+    Self {
+      id,
+      condition,
+      effect: match effect {
+        ast::Effect::Permit => AuthorizationCELConditionEffect::Allow,
+        ast::Effect::Forbid => AuthorizationCELConditionEffect::Deny,
+      },
+    }
+  }
+  pub fn new_from_policy<M: super::cel::EntityToCelVariableMapper>(policy: &ast::Policy, entity_uid_mapper: &mut M) -> Result<Self, super::cel::CedarToCelError> {
+    Ok(Self::new(policy.id().clone(), super::cel::cedar_to_cel(&policy.condition(), entity_uid_mapper)?, policy.effect()))
+  }
+  pub fn map_cel_expr<F: Fn(&super::cel::CELExpression) -> super::cel::CELExpression>(&self, f: F) -> Self {
+    Self {
+      id: self.id.clone(),
+      condition: f(&self.condition),
+      effect: self.effect.clone(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuthorizationCELConditionEffect {
+    Allow,
+    Deny,
+}

@@ -5,27 +5,66 @@ use axum::{
 use itertools::Itertools;
 use kube;
 use kube::runtime::{reflector, watcher};
-use kubernetes_cedar_authorizer::{cedar_authorizer::{self, kubestore::KubeStoreImpl}, k8s_authorizer::{self, KubernetesAuthorizer}};
+use kubernetes_cedar_authorizer::{cedar_authorizer::{self, kube_invariants, kubestore::KubeStoreImpl}, k8s_authorizer::{self, KubernetesAuthorizer}};
 
 use k8s_openapi::api::{authorization::v1::{SubjectAccessReview, SubjectAccessReviewStatus}, core::v1 as corev1};
 use cedar_policy::{PolicySet};
 use cedar_authorizer::kubestore::TestKubeStore;
 use tokio_util::sync::CancellationToken;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use axum_server::tls_rustls::RustlsConfig;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 
 use cedar_policy_core::{extensions::Extensions, validator::json_schema::Fragment};
-use tracing::{error, instrument};
+use tracing::{error,  instrument};
 use std::net::SocketAddr;
 use axum::extract::State;
 
+use opentelemetry_sdk::{logs::SdkLoggerProvider, trace::SdkTracerProvider};
+use opentelemetry::trace::{TracerProvider as _};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+
+    let filter = EnvFilter::from_default_env();
+
+    let mut providerbuilder = SdkTracerProvider::builder();
+
+    match std::env::var("TRACE_STDOUT") {
+        Ok(v) => {
+            if v == "true" {
+                providerbuilder = providerbuilder.with_simple_exporter(opentelemetry_stdout::SpanExporter::default());
+            }
+        },
+        Err(e) => {
+            eprintln!("Could not determine whether TRACE_STDOUT is set, skipping stdout tracing: {e}");
+        }
+    }
+
+    // TODO: Skip tracing if OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is not set? Or if it points to a non-4318 port?
+    /*match opentelemetry_otlp::SpanExporter::builder().with_http().build() {
+        Ok(exporter) => {
+            providerbuilder = providerbuilder.with_simple_exporter(exporter);
+        },
+        Err(e) => {
+            eprintln!("Could not build OTLP HTTP span exporter: {e}");
+        }
+    }*/
+    
+    // TODO: Customize the resource here
+   let tracer = providerbuilder.build().tracer("kubernetes-cedar-authorizer");
+
+    let logger = tracing_subscriber::fmt::layer();
+
+   let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+   Registry::default().with(filter).with(telemetry).with(logger).init();
+
+   
+
 
    match run().await {
     Ok(_) => (),
@@ -138,7 +177,7 @@ async fn healthz_handler() -> &'static str {
 }
 
 #[axum::debug_handler]
-#[instrument(skip(authorizer))]
+#[instrument(skip(authorizer), ret, err)]
 async fn authorize_handler(State(authorizer): State<Arc<CedarKubeAuthorizer>>, Json(review): Json<SubjectAccessReview>) -> Result<Json<SubjectAccessReview>, k8s_authorizer::AuthorizerError> {
     let attrs = k8s_authorizer::Attributes::from_subject_access_review(&review)?;
     let is_authorized = authorizer.is_authorized(attrs)?;
@@ -146,15 +185,45 @@ async fn authorize_handler(State(authorizer): State<Arc<CedarKubeAuthorizer>>, J
         allowed: is_authorized.decision == k8s_authorizer::Decision::Allow,
         denied: match is_authorized.decision {
             k8s_authorizer::Decision::Allow => None,
-            k8s_authorizer::Decision::Conditional(_) => None,
+            k8s_authorizer::Decision::Conditional(_, _) => None,
             k8s_authorizer::Decision::Deny => Some(true),
             k8s_authorizer::Decision::NoOpinion => None,
         },
         reason: Some(is_authorized.reason.to_string()),
         evaluation_error: Some(is_authorized.errors.iter().map(|e| e.to_string()).join("\n")),
     });
-    Ok(Json(SubjectAccessReview {
+    let mut review = SubjectAccessReview {
         status,
         ..review
-    }))
+    };
+    // TODO: Handle generateName precision; we cannot do an exact match, but we can do a prefix match.
+    match is_authorized.decision {
+        k8s_authorizer::Decision::Conditional(policies, jsonpaths_to_uid) => {
+            let uid_to_celvar = jsonpaths_to_uid.into_iter().map(|(jsonpath, uid)| (uid, match jsonpath.as_str() {
+                "resource.namespace.metadata" => "namespaceObject.metadata".to_string(),
+                "resource.namespace" => "namespaceObject".to_string(),
+                "resource.request.metadata" => "object.metadata".to_string(),
+                "resource.stored.metadata" => "oldObject.metadata".to_string(),
+                _ => match (jsonpath.strip_prefix("resource.request.v"), jsonpath.strip_prefix("resource.stored.v")) {
+                    (Some(_), None) => "object".to_string(),
+                    (None, Some(_)) => "oldObject".to_string(),
+                    _ => jsonpath,
+                },
+            }));
+            let fixup_mappings = HashMap::from([
+                ("resource.name.value".to_string(), "request.name".to_string()),
+                // TODO: Figure out if how to deal with implicit conversions from e.g. v1beta1 deployments to v1 deployments
+                // That is the difference between CEL's request.requestResource and request.resource
+                ("resource.apiGroup.value".to_string(), "request.requestResource.group".to_string()),
+                // TODO: Split resourceCombined into resource and subresource
+                ("namespaceObject.name".to_string(), "namespaceObject.metadata.name".to_string()),
+            ]);
+            let mut entity_uid_mapper = cedar_authorizer::cel::DefaultEntityToCelVariableMapper::new(uid_to_celvar);
+            let cel_conditions = cedar_authorizer::kube_invariants::AuthorizationConditions::from_policy_set(&policies, &mut entity_uid_mapper)?;
+            let cel_conditions = cel_conditions.map_cel_exprs(|c| c.rename_variables(&fixup_mappings));
+            cel_conditions.apply_to_subject_access_review(&mut review)?;
+        }
+        _ => ()
+    }
+    Ok(Json(review))
 }

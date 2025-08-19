@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use cedar_policy_core::ast;
+use cedar_policy_core::ast::{self, EntityUID};
 use cedar_policy_core::{
     ast::Annotations,
     tpe,
@@ -15,11 +16,12 @@ pub struct PartialResponseNew<'a> {
     pub tpe_response: tpe::response::Response<'a>,
 }
 
+// TODO: Make cloning O(1) using Arc?
 pub enum DetailedDecision {
     // If the request is denied with this non-empty enum, then at least one deny rule matched
     Deny(Vec<ast::PolicyID>),
     // If we got to conditional, then either we got a conditional deny policy and at least some true or conditional allow policies.
-    Conditional(super::PolicySet),
+    Conditional(super::PolicySet, HashMap<String, EntityUID>),
     // If we are allowed, then we know that there were no deny policies that were either true or residual that did not fold to false,
     // AND we had at least one allow policy that was always true.
     Allow(Vec<ast::PolicyID>),
@@ -71,12 +73,12 @@ impl<'a> PartialResponseNew<'a> {
                         super::PolicySet::new(&allowed_residuals, self.schema.clone())?;
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allowed_residuals, false)?; // TODO: Figure out how to handle policy IDs
-                    Ok(DetailedDecision::Conditional(residual_policies))
+                    Ok(DetailedDecision::Conditional(residual_policies, HashMap::new()))
                 }
                 AllowDecision::Conditional(allow_residuals) => {
                     let mut residual_policies = non_false_folded_forbid_residuals;
                     residual_policies.merge_policyset(&allow_residuals, false)?;
-                    Ok(DetailedDecision::Conditional(residual_policies))
+                    Ok(DetailedDecision::Conditional(residual_policies, HashMap::new()))
                 }
                 AllowDecision::NoMatch => Ok(DetailedDecision::NoOpinion),
             };
@@ -88,7 +90,7 @@ impl<'a> PartialResponseNew<'a> {
             AllowDecision::Allow(ids) => Ok(DetailedDecision::Allow(ids)),
             // TODO: Should we include here the forbid or permit policies that did fold to false? I guess not, and that is a "feature" for clarity.
             AllowDecision::Conditional(allow_residuals) => {
-                Ok(DetailedDecision::Conditional(allow_residuals))
+                Ok(DetailedDecision::Conditional(allow_residuals, HashMap::new()))
             }
             AllowDecision::NoMatch => Ok(DetailedDecision::NoOpinion),
         }
