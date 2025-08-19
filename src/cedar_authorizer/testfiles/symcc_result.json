@@ -1,0 +1,196 @@
+[
+  {
+    "uid": {
+      "type": "k8s::Action",
+      "id": "get"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::Action",
+      "id": "create"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "meta::StringToStringMap",
+      "id": ""
+    },
+    "attrs": {
+      "keys": []
+    },
+    "parents": [],
+    "tags": {
+      "env": "dev",
+      "owner": "team-3"
+    }
+  },
+  {
+    "uid": {
+      "type": "k8s::nonresource::Action",
+      "id": "*"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "core::VersionedPod",
+      "id": ""
+    },
+    "attrs": {
+      "apiVersion": "B",
+      "kind": "C",
+      "metadata": {
+        "annotations": {
+          "__entity": {
+            "type": "meta::StringToStringMap",
+            "id": "A"
+          }
+        },
+        "deleted": true,
+        "finalizers": [],
+        "labels": {
+          "__entity": {
+            "type": "meta::StringToStringMap",
+            "id": ""
+          }
+        },
+        "uid": ""
+      }
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::User",
+      "id": ""
+    },
+    "attrs": {
+      "groups": [],
+      "extra": {
+        "__entity": {
+          "type": "meta::StringToStringSetMap",
+          "id": ""
+        }
+      },
+      "username": ""
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::Action",
+      "id": "watch"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::Action",
+      "id": "*"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "core::pods",
+      "id": ""
+    },
+    "attrs": {
+      "stored": {
+        "__entity": {
+          "type": "core::VersionedPod",
+          "id": ""
+        }
+      },
+      "apiGroup": "",
+      "namespace": {
+        "__entity": {
+          "type": "k8s::Namespace",
+          "id": ""
+        }
+      },
+      "name": "A",
+      "resourceCombined": "pods"
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::Action",
+      "id": "list"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::Namespace",
+      "id": ""
+    },
+    "attrs": {
+      "metadata": {
+        "annotations": {
+          "__entity": {
+            "type": "meta::StringToStringMap",
+            "id": ""
+          }
+        },
+        "deleted": false,
+        "finalizers": [],
+        "labels": {
+          "__entity": {
+            "type": "meta::StringToStringMap",
+            "id": ""
+          }
+        }
+      },
+      "name": ""
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "meta::StringToStringMap",
+      "id": "A"
+    },
+    "attrs": {
+      "keys": []
+    },
+    "parents": [],
+    "tags": {
+      "env": "team-3",
+      "owner": "team-3"
+    }
+  },
+  {
+    "uid": {
+      "type": "meta::StringToStringSetMap",
+      "id": ""
+    },
+    "attrs": {
+      "keys": []
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "k8s::nonresource::Action",
+      "id": "get"
+    },
+    "attrs": {},
+    "parents": [
+      {
+        "type": "k8s::nonresource::Action",
+        "id": "*"
+      }
+    ]
+  }
+]
