@@ -222,6 +222,7 @@ async fn authorize_handler(
     });
     let mut review = SubjectAccessReview { status, ..review };
     // TODO: Handle generateName precision; we cannot do an exact match, but we can do a prefix match.
+    // Or try it out, most likely the server already generated a name from the prefix at the time AdmissionReview is sent.
     if let k8s_authorizer::Decision::Conditional(policies, jsonpaths_to_uid) =
         is_authorized.decision
     {
