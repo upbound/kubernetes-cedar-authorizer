@@ -147,6 +147,7 @@ async fn run() -> Result<(), SetupError> {
             "/healthz",
             get(healthz_handler),
         )
+        .route("/readyz", get(readyz_handler))
         .with_state(authorizer);
 
     // Bind to address
@@ -192,6 +193,10 @@ type CedarKubeAuthorizer = cedar_authorizer::authorizer::CedarKubeAuthorizer<
 >;
 
 async fn healthz_handler() -> &'static str {
+    "ok"
+}
+
+async fn readyz_handler() -> &'static str {
     "ok"
 }
 

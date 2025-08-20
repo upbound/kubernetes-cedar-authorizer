@@ -7,14 +7,13 @@ edition = "2021"
 anyhow = "1.0.98"
 axum = {version = "0.8.4", features = ["http2", "macros"]}
 axum-server = { version = "0.7.2", features = ["tls-rustls"]}
-# cedar-policy = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed", features = ["tpe"] }
-# cedar-policy-core = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed", features = ["tpe"] }
-# cedar-policy-symcc = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed" }
+cedar-policy = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed", features = ["tpe"] }
+cedar-policy-core = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed", features = ["tpe"] }
+cedar-policy-symcc = { git = "https://github.com/cedar-policy/cedar.git", rev = "82784864c01b5096cb73885dd2df5643074355ed" }
 
-cedar-policy = { path = "../cedar/cedar-policy", features = ["tpe"] }
-cedar-policy-core = { path = "../cedar/cedar-policy-core", features = ["tpe"] }
-cedar-policy-symcc = { path = "../cedar/cedar-policy-symcc" }
-cel = { path = "../cel-rust/cel" }
+# cedar-policy = { path = "../cedar/cedar-policy", features = ["tpe"] }
+# cedar-policy-core = { path = "../cedar/cedar-policy-core", features = ["tpe"] }
+# cedar-policy-symcc = { path = "../cedar/cedar-policy-symcc" }
 futures = "0.3.31"
 futures-util = "0.3.31"
 http = "1.3.1"

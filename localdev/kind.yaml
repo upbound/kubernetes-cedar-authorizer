@@ -1,0 +1,30 @@
+# Written for kind v0.29.0 and Kubernetes v1.33.x
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: kubernetes-cedar-authorizer
+featureGates:
+  AuthorizeNodeWithSelectors: true
+  AuthorizeWithSelectors: true
+  SubjectAccessReviewConditions: true
+nodes:
+- role: control-plane
+  image: kindest/node:luxas_conditional_authz_2_latest
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        authorization-config: /kubernetes-cedar-authorizer/apiserver-authz-config.yaml
+      extraVolumes:
+      - hostPath: /kubernetes-cedar-authorizer
+        mountPath: /kubernetes-cedar-authorizer
+        name: kubernetes-cedar-authorizer
+  extraMounts:
+  - hostPath: "./localdev/mount"
+    containerPath: "/kubernetes-cedar-authorizer"
+  - hostPath: "./localdev/webhook-static-pod.yaml"
+    containerPath: "/etc/kubernetes/manifests/webhook-static-pod.yaml"
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
