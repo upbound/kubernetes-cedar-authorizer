@@ -6,7 +6,7 @@ use serde_json::Value;
 use err::Result;
 
 mod connect;
-mod core;
+pub(crate) mod core;
 mod customverbs;
 mod discovery;
 mod err;

@@ -15,26 +15,27 @@ use super::err::Result;
 
 pub static K8S_NS: LazyLock<Option<Name>> = LazyLock::new(|| Some(Name::from_str("k8s").unwrap()));
 
-// TODO: Make it an error to try to use this manually, e.g. through k8s RBAC.
-pub(crate) static ACTION_ANY: LazyLock<ActionUID> =
-    LazyLock::new(|| ActionUID(K8S_NS.clone(), "any".to_string()));
+pub static K8S_NONRESOURCE_NS: LazyLock<Option<Name>> =
+    LazyLock::new(|| Some(Name::from_str("k8s::nonresource").unwrap()));
 
-// For both Resource- and Non-Resource Requests
-static ALL_RESOURCE_ACTIONS: LazyLock<[ActionUID; 4]> = LazyLock::new(|| {
+// TODO: Make it an error to try to use this manually, e.g. through k8s RBAC.
+pub(crate) static RESOURCE_ACTION_ANY: LazyLock<ActionUID> =
+    LazyLock::new(|| ActionUID(K8S_NS.clone(), "*".to_string()));
+
+pub(crate) static NONRESOURCE_ACTION_ANY: LazyLock<ActionUID> =
+    LazyLock::new(|| ActionUID(K8S_NONRESOURCE_NS.clone(), "*".to_string()));
+
+// For resource-requests only
+static RESOURCE_ACTIONS: LazyLock<[ActionUID; 10]> = LazyLock::new(|| {
     [
-        ACTION_ANY.clone(),
+        RESOURCE_ACTION_ANY.clone(),
         ActionUID(K8S_NS.clone(), "get".to_string()), // HEAD -> get for resource requests
         ActionUID(K8S_NS.clone(), "patch".to_string()), // Not sure if this applies to non-resource requests
         ActionUID(K8S_NS.clone(), "delete".to_string()), // Not sure if this applies to non-resource requests
-    ]
-});
-
-// For resource-requests only
-static ONLY_RESOURCE_ACTIONS: LazyLock<[ActionUID; 6]> = LazyLock::new(|| {
-    [
         ActionUID(K8S_NS.clone(), "list".to_string()),
         ActionUID(K8S_NS.clone(), "watch".to_string()),
         // TIL: Creates can have name from the path already, for subresource requests.
+        // TODO: Add dryRun to create, update, patch, delete, deletecollection actions contexts.
         ActionUID(K8S_NS.clone(), "create".to_string()),
         ActionUID(K8S_NS.clone(), "update".to_string()),
         ActionUID(K8S_NS.clone(), "deletecollection".to_string()),
@@ -50,12 +51,16 @@ static ONLY_RESOURCE_ACTIONS: LazyLock<[ActionUID; 6]> = LazyLock::new(|| {
 // so we can probably skip it.
 
 // For non-resource requests only
-static ONLY_NONRESOURCE_ACTIONS: LazyLock<[ActionUID; 4]> = LazyLock::new(|| {
+static NONRESOURCE_ACTIONS: LazyLock<[ActionUID; 8]> = LazyLock::new(|| {
     [
-        ActionUID(K8S_NS.clone(), "put".to_string()),
-        ActionUID(K8S_NS.clone(), "post".to_string()),
-        ActionUID(K8S_NS.clone(), "head".to_string()),
-        ActionUID(K8S_NS.clone(), "options".to_string()),
+        NONRESOURCE_ACTION_ANY.clone(),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "get".to_string()), // HEAD -> get for resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "patch".to_string()), // Not sure if this applies to non-resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "delete".to_string()), // Not sure if this applies to non-resource requests
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "put".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "post".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "head".to_string()),
+        ActionUID(K8S_NONRESOURCE_NS.clone(), "options".to_string()),
     ]
 });
 
@@ -72,7 +77,7 @@ pub(crate) static PRINCIPAL_USER: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
             "groups".into(),
             TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
         ),
-        ("uid".into(), TypeWrapper::String.required()),
+        ("uid".into(), TypeWrapper::String.optional()),
         (
             "extra".into(),
             TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
@@ -81,15 +86,30 @@ pub(crate) static PRINCIPAL_USER: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(), // No entity groups for now
         apply_to_actions_as_principal: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
         ])
         .concat(), // TODO: How to know all verbs at this point?
         apply_to_actions_as_resource: Vec::new(),
         tags: None,
     },
 });
+
+pub(crate) static PRINCIPAL_UNAUTHENTICATEDUSER: LazyLock<EntityWrapper> =
+    LazyLock::new(|| EntityWrapper {
+        name: CedarTypeName::new(K8S_NS.clone(), "UnauthenticatedUser").unwrap(),
+        attrs: BTreeMap::from([]),
+        kind: TypeKind::EntityType {
+            members_of_types: Vec::new(), // No entity groups for now
+            apply_to_actions_as_principal: Vec::from([
+                Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            ])
+            .concat(), // TODO: How to know all verbs at this point?
+            apply_to_actions_as_resource: Vec::new(),
+            tags: None,
+        },
+    });
 
 pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
     LazyLock::new(|| EntityWrapper {
@@ -101,24 +121,24 @@ pub(crate) static PRINCIPAL_SERVICEACCOUNT: LazyLock<EntityWrapper> =
                 "groups".into(),
                 TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
             ),
-            ("uid".into(), TypeWrapper::String.required()),
+            ("uid".into(), TypeWrapper::String.optional()),
+            (
+                "extra".into(),
+                TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
+            ),
             // ServiceAccount-specific
             ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" SA here?
             (
                 "namespace".into(),
                 TypeWrapper::CommonRef(ENTITY_NAMESPACE.name.full_name()).required(),
             ),
-            (
-                "extra".into(),
-                TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
-            ),
         ]),
         kind: TypeKind::EntityType {
-            members_of_types: Vec::from([&ENTITY_NAMESPACE.name]),
+            // TODO: We might want to add "in [k8s::Namespace]" to the type, but not before we know if we _really_ need it.
+            members_of_types: Vec::new(),
             apply_to_actions_as_principal: Vec::from([
-                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
             ])
             .concat(), // TODO: How to know all verbs at this point?
             apply_to_actions_as_resource: Vec::new(),
@@ -135,20 +155,19 @@ pub(crate) static PRINCIPAL_NODE: LazyLock<EntityWrapper> = LazyLock::new(|| Ent
             "groups".into(),
             TypeWrapper::Set(Box::new(TypeWrapper::String)).required(),
         ),
-        ("uid".into(), TypeWrapper::String.required()),
-        // Node-specific
-        ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" Node here?
+        ("uid".into(), TypeWrapper::String.optional()),
         (
             "extra".into(),
             TypeWrapper::EntityRef(MAP_STRINGSTRINGSET.0.full_name()).required(),
         ),
+        // Node-specific
+        ("name".into(), TypeWrapper::String.required()), // TODO: Mount in the "whole" Node here?
     ]),
     kind: TypeKind::EntityType {
         members_of_types: Vec::new(),
         apply_to_actions_as_principal: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice(),
+            Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice(),
         ])
         .concat(), // TODO: How to know all verbs at this point?
         apply_to_actions_as_resource: Vec::new(),
@@ -166,7 +185,7 @@ pub(crate) static ENTITY_NAMESPACE: LazyLock<EntityWrapper> = LazyLock::new(|| E
         ("name".into(), TypeWrapper::String.required()),
         (
             "metadata".into(),
-            TypeWrapper::CommonRef(TYPE_OBJECTMETA.name.full_name()).required(),
+            TypeWrapper::CommonRef(ENTITY_OBJECTMETA.name.full_name()).required(),
         ),
     ]),
     kind: TypeKind::EntityType {
@@ -182,7 +201,7 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
     name: CedarTypeName::new(K8S_NS.clone(), "Resource").unwrap(),
     attrs: BTreeMap::from([
         ("apiGroup".into(), TypeWrapper::String.required()),
-        ("apiVersion".into(), TypeWrapper::String.required()),
+        // ("apiVersion".into(), TypeWrapper::String.required()), TODO: Add later if needed
         ("resourceCombined".into(), TypeWrapper::String.required()),
         ("name".into(), TypeWrapper::String.required()),
         (
@@ -191,12 +210,11 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
         ),
     ]),
     kind: TypeKind::EntityType {
-        members_of_types: Vec::from([&ENTITY_NAMESPACE.name]),
+        members_of_types: Vec::new(), // Add ancestors here later only when we know of a need.
         apply_to_actions_as_principal: Vec::new(),
-        apply_to_actions_as_resource: Vec::from([
-            Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-            Vec::from(ONLY_RESOURCE_ACTIONS.as_slice()).as_slice(),
-        ])
+        apply_to_actions_as_resource: Vec::from(
+            [Vec::from(RESOURCE_ACTIONS.as_slice()).as_slice()],
+        )
         .concat(),
         tags: None,
     },
@@ -205,14 +223,13 @@ pub(crate) static RESOURCE_RESOURCE: LazyLock<EntityWrapper> = LazyLock::new(|| 
 // ID is just a random UUID to avoid people depending on the Entity ID.
 pub(crate) static RESOURCE_NONRESOURCEURL: LazyLock<EntityWrapper> =
     LazyLock::new(|| EntityWrapper {
-        name: CedarTypeName::new(K8S_NS.clone(), "NonResourceURL").unwrap(),
+        name: CedarTypeName::new(K8S_NONRESOURCE_NS.clone(), "NonResourceURL").unwrap(),
         attrs: BTreeMap::from([("path".into(), TypeWrapper::String.required())]),
         kind: TypeKind::EntityType {
             members_of_types: Vec::new(),
             apply_to_actions_as_principal: Vec::new(),
             apply_to_actions_as_resource: Vec::from([
-                Vec::from(ALL_RESOURCE_ACTIONS.as_slice()).as_slice(),
-                Vec::from(ONLY_NONRESOURCE_ACTIONS.as_slice()).as_slice(),
+                Vec::from(NONRESOURCE_ACTIONS.as_slice()).as_slice()
             ])
             .concat(),
             tags: None,
@@ -223,19 +240,21 @@ pub(super) static META_NS: LazyLock<Option<Name>> =
     LazyLock::new(|| Some(Name::from_str("meta").unwrap()));
 
 // TODO: Evaluate the EntityWrapper again
-pub(super) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>)> =
+pub(crate) static MAP_STRINGSTRING: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| make_stringmap_type((&TypeWrapper::String).into()).unwrap());
 
-pub(super) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =
+pub(crate) static MAP_STRINGSTRINGSET: LazyLock<(CedarTypeName, EntityType<RawName>)> =
     LazyLock::new(|| {
+        // TODO: Add an optional "first" property for the values.
         make_stringmap_type((&TypeWrapper::Set(Box::new(TypeWrapper::String))).into()).unwrap()
     });
 
-pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
+pub static ENTITY_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| EntityWrapper {
     name: CedarTypeName::new(META_NS.clone(), "V1ObjectMeta").unwrap(),
     attrs: BTreeMap::from([
+        // TODO: Change these to be simpler with the bare minimal things needed.
         // Required strings
-        ("uid".into(), TypeWrapper::String.required()),
+        ("uid".into(), TypeWrapper::String.optional()),
         ("creationTimestamp".into(), TypeWrapper::String.required()), // TODO: timestamp
         ("resourceVersion".into(), TypeWrapper::String.required()),
         // Required sets
@@ -255,31 +274,42 @@ pub(super) static TYPE_OBJECTMETA: LazyLock<EntityWrapper> = LazyLock::new(|| En
         ("deletionTimestamp".into(), TypeWrapper::String.optional()), // TODO: timestamp
         ("generateName".into(), TypeWrapper::String.optional()),
     ]),
-    kind: TypeKind::CommonType,
+    kind: TypeKind::EntityType {
+        members_of_types: Vec::new(),
+        apply_to_actions_as_principal: Vec::new(),
+        apply_to_actions_as_resource: Vec::new(),
+        tags: None,
+    },
 });
 
 pub(crate) fn build_base() -> Result<Fragment<RawName>> {
     let mut f = Fragment(BTreeMap::new());
 
-    for a in ALL_RESOURCE_ACTIONS.iter() {
+    for a in RESOURCE_ACTIONS.iter() {
         a.apply(
             &mut f,
             None,
-            if a.1 == ACTION_ANY.1 {
+            if a.1 == RESOURCE_ACTION_ANY.1 {
                 None
             } else {
-                Some(Vec::from([ACTION_ANY.deref().into()]))
+                Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()]))
             },
         );
     }
-    for a in ONLY_RESOURCE_ACTIONS.iter() {
-        a.apply(&mut f, None, Some(Vec::from([ACTION_ANY.deref().into()])));
-    }
-    for a in ONLY_NONRESOURCE_ACTIONS.iter() {
-        a.apply(&mut f, None, Some(Vec::from([ACTION_ANY.deref().into()])));
+    for a in NONRESOURCE_ACTIONS.iter() {
+        a.apply(
+            &mut f,
+            None,
+            if a.1 == NONRESOURCE_ACTION_ANY.1 {
+                None
+            } else {
+                Some(Vec::from([NONRESOURCE_ACTION_ANY.deref().into()]))
+            },
+        );
     }
 
     PRINCIPAL_USER.apply(&mut f)?;
+    PRINCIPAL_UNAUTHENTICATEDUSER.apply(&mut f)?;
     PRINCIPAL_SERVICEACCOUNT.apply(&mut f)?;
     PRINCIPAL_NODE.apply(&mut f)?;
 
@@ -287,7 +317,7 @@ pub(crate) fn build_base() -> Result<Fragment<RawName>> {
     RESOURCE_RESOURCE.apply(&mut f)?;
     RESOURCE_NONRESOURCEURL.apply(&mut f)?;
 
-    TYPE_OBJECTMETA.apply(&mut f)?;
+    ENTITY_OBJECTMETA.apply(&mut f)?;
     namespace_of_fragment(&mut f, MAP_STRINGSTRING.0.cedar_namespace.clone())
         .entity_types
         .insert(
@@ -317,7 +347,7 @@ mod test {
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        println!("{}", core_fragment);
+        println!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/core.cedarschema")

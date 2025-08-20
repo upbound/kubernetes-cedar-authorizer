@@ -5,12 +5,14 @@ use cedar_policy_core::ast::Name;
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use super::core::{ACTION_ANY, K8S_NS, PRINCIPALS};
+use super::core::{K8S_NS, PRINCIPALS, RESOURCE_ACTION_ANY};
 use super::err::Result;
 use super::types::{ActionUID, CedarTypeName, EntityWrapper, TypeKind, TypeWrapper};
 
 use std::ops::Deref;
 use std::str::FromStr;
+
+// TODO: Make this actually use k8s::User, k8s::ServiceAccount, k8s::Node, etc. as resource types.
 
 static AUTHENTICATION_K8S_IO_NS: LazyLock<Option<Name>> =
     LazyLock::new(|| Some(Name::from_str("io::k8s::authentication").unwrap()));
@@ -90,7 +92,7 @@ pub(crate) fn with_impersonation(f: &mut Fragment<RawName>) -> Result<()> {
             principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
             context: Default::default(),
         }),
-        Some(Vec::from([ACTION_ANY.deref().into()])),
+        Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()])),
     );
 
     RESOURCE_USERS.apply(f)?;
@@ -119,7 +121,7 @@ mod test {
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        println!("{}", core_fragment);
+        println!("{core_fragment}");
 
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {

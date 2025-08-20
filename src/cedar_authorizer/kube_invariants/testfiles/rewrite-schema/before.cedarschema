@@ -1,0 +1,28 @@
+namespace k8s {
+    action "create" appliesTo {
+        principal: [A],
+        resource: [A, core::B, core::C],
+        context: {}
+    };
+
+    entity A = {
+        "foo": __cedar::String,
+    };
+}
+
+namespace core {
+    entity B = {
+        "foo": __cedar::String,
+        "bar": __cedar::String,
+    };
+    entity C = {
+        "foo": __cedar::String,
+        "baz": __cedar::String,
+    };
+}
+
+namespace meta {
+    entity UnknownString = {
+        "value": __cedar::String,
+    };
+}

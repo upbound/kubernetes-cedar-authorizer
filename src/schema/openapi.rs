@@ -14,11 +14,7 @@ use super::err::{Result, SchemaProcessingError};
 use super::util::{make_stringmap_type, namespace_of_fragment};
 
 pub(crate) struct GroupVersionedOpenAPIType {
-    pub(crate) gv: CedarGroupVersion,
-    // something like "PodStatus", scoped within gv
-    pub(crate) openapi_type_name: String,
     pub(crate) cedar_type_name: CedarTypeName,
-    //pub(crate) is_gvk: bool,
 }
 
 static META_COMPONENT_PREFIXES: LazyLock<HashSet<&str>> = LazyLock::new(|| {
@@ -85,10 +81,12 @@ impl GroupVersionedOpenAPIType {
         Ok(GroupVersionedOpenAPIType {
             cedar_type_name: CedarTypeName::new(
                 gv.cedar_name.clone(),
-                &format!("{}{}", &title_case(&gv.version), &openapi_type_name),
+                &format!(
+                    "{}{}",
+                    &crate::util::title_case(&gv.version),
+                    &openapi_type_name
+                ),
             )?,
-            gv,
-            openapi_type_name,
         })
     }
 
@@ -103,9 +101,7 @@ impl GroupVersionedOpenAPIType {
     // io.k8s.networking.gateway => Reversed API group for CRDs, for gateway.networking.k8s.io
     // TODO: Handle io.k8s.kube-aggregator.pkg.apis
     // TODO special case for API extensions?
-    pub(crate) fn from_component_name<'a>(
-        component_name: &str,
-    ) -> Result<GroupVersionedOpenAPIType> {
+    pub(crate) fn from_component_name(component_name: &str) -> Result<GroupVersionedOpenAPIType> {
         let parts: Vec<&str> = component_name.split('.').rev().collect();
         if parts.len() < 4 {
             return Err(SchemaProcessingError::OpenAPI(
@@ -163,16 +159,6 @@ impl GroupVersionedOpenAPIType {
     }*/
 }
 
-fn title_case(name: &str) -> String {
-    name.chars()
-        .enumerate()
-        .map(|(i, c)| match i {
-            0 => c.to_ascii_uppercase(),
-            _ => c,
-        })
-        .collect()
-}
-
 pub(super) fn with_openapi_schemas(
     fragment: &mut Fragment<RawName>,
     openapi_spec: &Value,
@@ -205,7 +191,7 @@ fn process(
     // Parse the schema name into its components
     let openapi_type = GroupVersionedOpenAPIType::from_component_name(component_name)?;
 
-    eprintln!("Processing: {}", component_name);
+    eprintln!("Processing: {component_name}");
     // This will create the namespace if not already exists
     let namespace = namespace_of_fragment(
         fragment,
@@ -217,7 +203,7 @@ fn process(
         .common_types
         .contains_key(&openapi_type.cedar_type_name.common_type_id()?)
     {
-        eprintln!("Type already exists: {}", component_name);
+        eprintln!("Type already exists: {component_name}");
         return Ok(());
     }
 
@@ -482,11 +468,11 @@ fn process_openapi_value(
                 }
             }
             "number" => {
-                eprintln!("Skipping number: {}, {:?}", attr_name, val);
+                eprintln!("Skipping number: {attr_name}, {val:?}");
                 None
             }
             _ => {
-                eprintln!("Skipping unknown type: {} for {}", attr_type, attr_name);
+                eprintln!("Skipping unknown type: {attr_type} for {attr_name}");
                 None
             }
         },
@@ -558,77 +544,41 @@ mod test {
             CedarGroupVersion::new("gateway.networking.k8s.io".to_string(), "v1".to_string())
                 .expect("parse works");*/
         let tests = Vec::from([
-            (
-                "io.k8s.api.core.v1.Volume",
-                "core::V1Volume",
-                "",
-                "v1",
-                "Volume",
-            ),
+            ("io.k8s.api.core.v1.Volume", "core::V1Volume"),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector",
                 "meta::V1LabelSelector",
-                "meta",
-                "v1",
-                "LabelSelector",
             ),
             (
                 "io.k8s.api.apps.v1.DeploymentStatus",
                 "apps::V1DeploymentStatus",
-                "apps",
-                "v1",
-                "DeploymentStatus",
             ),
-            (
-                "io.k8s.api.core.v1.PodSpec",
-                "core::V1PodSpec",
-                "",
-                "v1",
-                "PodSpec",
-            ),
+            ("io.k8s.api.core.v1.PodSpec", "core::V1PodSpec"),
             (
                 "io.k8s.apimachinery.pkg.api.resource.Quantity",
                 "meta::V1Quantity",
-                "meta",
-                "v1",
-                "Quantity",
             ),
             (
                 "io.k8s.api.rbac.v1.Subject",
                 "io::k8s::authorization::rbac::V1Subject",
-                "rbac.authorization.k8s.io",
-                "v1",
-                "Subject",
             ),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta",
                 "meta::V1ListMeta",
-                "meta",
-                "v1",
-                "ListMeta",
             ),
             (
                 "io.k8s.networking.gateway.v1.GRPCRoute",
                 "io::k8s::networking::gateway::V1GRPCRoute",
-                "gateway.networking.k8s.io",
-                "v1",
-                "GRPCRoute",
             ),
             (
                 "io.k8s.apimachinery.pkg.apis.meta.v1.Status",
                 "meta::V1Status",
-                "meta",
-                "v1",
-                "Status",
             ),
         ]);
         for test in tests {
             let t = super::GroupVersionedOpenAPIType::from_component_name(test.0)
                 .expect("test to not error");
             assert_eq!(t.cedar_type_name.full_name().to_string(), test.1);
-            assert_eq!(t.gv.group, test.2);
-            assert_eq!(t.gv.version, test.3);
-            assert_eq!(t.openapi_type_name, test.4);
         }
     }
 

@@ -120,15 +120,18 @@ pub(super) fn with_connect_rewrites(
 
                     let actions_ns = namespace_of_fragment(fragment, K8S_NS.clone());
 
-                    let verb_action = actions_ns.actions.get_mut(verb.as_str()).and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
-                        "Expected all actions to be populated already, but found one that did not exist".to_string()
-                    ))?;
-                    // Remove this GVR from this "get" action; and make sure it exists in
+                    // Remove this GVR from this {verb} action (if it exists); and make sure it exists in the connect action instead
                     let cedar_gvr_type_name = gv.resource_type_name(&gvr.resource)?.full_name();
-                    verb_action
-                        .resource_types
-                        .retain(|type_name| type_name != &cedar_gvr_type_name);
-                    eprintln!("Removed from {}: {}", verb, &cedar_gvr_type_name);
+                    if let Some(verb_action) = actions_ns
+                        .actions
+                        .get_mut(verb.as_str())
+                        .and_then(|a| a.applies_to.as_mut())
+                    {
+                        verb_action
+                            .resource_types
+                            .retain(|type_name| type_name != &cedar_gvr_type_name);
+                        eprintln!("Removed from {}: {}", verb, &cedar_gvr_type_name);
+                    }
 
                     let connect_action = actions_ns.actions.get_mut("connect").and_then(|a| a.applies_to.as_mut()).ok_or_else(|| SchemaProcessingError::OpenAPI(
                         "Expected the connect actions to be populated already, it did not exist".to_string()
@@ -153,6 +156,7 @@ pub(super) fn with_connect_rewrites(
         // TODO: Probably these could be hard-coded for Kubernetes core, by them just magically "existing" prior to this
         // invocation. That way, custom integrators could also have their own "base", with typed params.
         // TODO: Connect resources never have an oldobject
+        // TODO: Just hardcode the built-in connect types for now; don't make this generic for aggregated API servers.
 
         if k8s_actions.contains(&"connect") {
             // sanity check the OpenAPI invariants
@@ -246,16 +250,12 @@ pub(super) fn with_connect_rewrites(
                     )
                 })?;
             match &mut versionlist_type.ty {
-                Type::Type { ty, .. } => match ty {
-                    TypeVariant::Record(rt) => {
-                        rt.attributes.remove("metadata");
-                    }
-                    _ => {
-                        return Err(SchemaProcessingError::Unknown(
-                            "expected versionlist to be a record".to_string(),
-                        ))
-                    }
-                },
+                Type::Type {
+                    ty: TypeVariant::Record(rt),
+                    ..
+                } => {
+                    rt.attributes.remove("metadata");
+                }
                 _ => {
                     return Err(SchemaProcessingError::Unknown(
                         "expected versionlist to be a record".to_string(),
@@ -296,7 +296,7 @@ fn parse_url_into_gvr(url: &str) -> Option<GroupVersionResource> {
         Some(GroupVersionResource::gvr(
             group,
             version,
-            &format!("{}/{}", resource, subresource),
+            &format!("{resource}/{subresource}"),
         ))
     } else {
         Some(GroupVersionResource::gvr(group, version, resource))
@@ -405,12 +405,12 @@ mod test {
         let connect_mappings =
             schema::connect::with_connect_rewrites(&mut core_fragment, &gv, &openapi_core_v1)
                 .expect("connect rewrite to work");
-        eprintln!("Connect mappings: {:?}", connect_mappings);
+        eprintln!("Connect mappings: {connect_mappings:?}");
 
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        eprintln!("{}", core_fragment);
+        eprintln!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/withconnect.cedarschema")

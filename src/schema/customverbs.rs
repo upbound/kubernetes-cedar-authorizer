@@ -1,7 +1,7 @@
 use cedar_policy_core::validator::json_schema::{ApplySpec, Fragment};
 use cedar_policy_core::validator::RawName;
 
-use crate::schema::core::{ACTION_ANY, PRINCIPALS, RESOURCE_RESOURCE};
+use crate::schema::core::{PRINCIPALS, RESOURCE_ACTION_ANY, RESOURCE_RESOURCE};
 
 use super::core::K8S_NS;
 use super::err::Result;
@@ -41,7 +41,7 @@ pub(crate) fn with_custom_verbs(
                     principal_types: Vec::from(PRINCIPALS.map(|p| p.name.full_name())),
                     context: Default::default(),
                 }),
-                Some(Vec::from([ACTION_ANY.deref().into()])),
+                Some(Vec::from([RESOURCE_ACTION_ANY.deref().into()])),
             );
         }
     }
@@ -67,7 +67,7 @@ mod test {
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        println!("{}", core_fragment);
+        println!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/withcustomverbs.cedarschema")

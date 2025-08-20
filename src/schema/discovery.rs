@@ -5,7 +5,7 @@ use cedar_policy_core::validator::json_schema::{
 use cedar_policy_core::validator::RawName;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
 
-use super::core::{ENTITY_NAMESPACE, K8S_NS, TYPE_OBJECTMETA};
+use super::core::{ENTITY_NAMESPACE, ENTITY_OBJECTMETA, K8S_NS};
 
 use super::err::Result;
 use super::openapi::GroupVersionedOpenAPIType;
@@ -91,7 +91,7 @@ pub fn with_kubernetes_groupversion(
             name: gv.resource_type_name(&resource.name)?,
             attrs: BTreeMap::from([
                 ("apiGroup".into(), TypeWrapper::String.required()),
-                ("apiVersion".into(), TypeWrapper::String.required()),
+                //("apiVersion".into(), TypeWrapper::String.required()), TODO: Add later if needed
                 ("resourceCombined".into(), TypeWrapper::String.required()),
                 // TODO: required for subresources, not for top-level ones.
                 ("name".into(), TypeWrapper::String.required()),
@@ -105,11 +105,8 @@ pub fn with_kubernetes_groupversion(
                 ),
             ]),
             kind: TypeKind::EntityType {
-                members_of_types: if resource.namespaced {
-                    Vec::from([&ENTITY_NAMESPACE.name])
-                } else {
-                    Vec::new()
-                },
+                // TODO: We might want to add "in [k8s::Namespace]" to the type, but not before we know if we _really_ need it.
+                members_of_types: Vec::new(),
                 apply_to_actions_as_principal: Vec::new(),
                 apply_to_actions_as_resource: resource
                     .verbs
@@ -157,7 +154,7 @@ pub fn with_kubernetes_groupversion(
             payload_versionlist_type_name.cedar_namespace.clone(),
         );
         let payload_versionlist_type = payload_versionlist_ns
-            .common_types
+            .common_types // TODO: Make this an entity type instead
             .entry(payload_versionlist_type_name.clone().try_into()?)
             .or_insert_with(|| CommonType {
                 ty: Type::Type {
@@ -167,8 +164,11 @@ pub fn with_kubernetes_groupversion(
                             ("kind".into(), TypeWrapper::String.required()),
                             (
                                 // TODO: Metadata should probably not be set using status subresource. Check what is given in admission in the stored object; the full object or not?
+                                // Only add metadata if it really exists on the top-level object, although it exists for pretty much all objects.
+                                // TODO: How much information is available in admission for status subresource requests?
                                 "metadata".into(),
-                                TypeWrapper::CommonRef(TYPE_OBJECTMETA.name.full_name()).required(),
+                                TypeWrapper::CommonRef(ENTITY_OBJECTMETA.name.full_name())
+                                    .required(),
                             ),
                         ]),
                         additional_attributes: false,
@@ -181,17 +181,16 @@ pub fn with_kubernetes_groupversion(
 
         // The same resource, e.g. horizontalpodautoscalers, might exist in multiple versions (v1 and v2).
         // Add both versions to the schema
-        if let Type::Type { ty, .. } = &mut payload_versionlist_type.ty {
-            if let TypeVariant::Record(record) = ty {
-                // TODO: Can we keep this required here?
-                record.attributes.insert(
-                    payload_gv.version.as_str().into(),
-                    TypeWrapper::CommonRef(
-                        versioned_payload_openapi_type.cedar_type_name.full_name(),
-                    )
-                    .required(),
-                );
-            }
+        if let Type::Type {
+            ty: TypeVariant::Record(record),
+            ..
+        } = &mut payload_versionlist_type.ty
+        {
+            record.attributes.insert(
+                payload_gv.version.as_str().into(),
+                TypeWrapper::CommonRef(versioned_payload_openapi_type.cedar_type_name.full_name())
+                    .optional(),
+            );
         }
 
         // TODO: Create payload_cedar_entity and dependents here from OpenAPI schema
@@ -255,7 +254,7 @@ mod test {
         let core_fragment_str = core_fragment
             .to_cedarschema()
             .expect("test schema can be displayed");
-        println!("{}", core_fragment);
+        println!("{core_fragment}");
         // assert test schema file is already formatted
         if core_fragment_str != test_schema_str {
             let mut f = std::fs::File::create("src/schema/testfiles/withdiscovery.cedarschema")
