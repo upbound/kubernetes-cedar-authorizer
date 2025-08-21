@@ -1,0 +1,197 @@
+namespace k8s {
+  entity UnauthenticatedUser = {};
+
+  entity User = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity ServiceAccount = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "serviceAccountNamespace": __cedar::String,
+    "serviceAccountName": __cedar::String,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity Node = {
+    "extra": meta::StringToStringSetMap,
+    "groups": Set<__cedar::String>,
+    "nodeName": __cedar::String,
+    "uid"?: __cedar::String,
+    "username": __cedar::String
+  };
+
+  entity Namespace = {
+    "metadata": meta::V1ObjectMeta,
+    "name": __cedar::String
+  };
+
+  entity Resource = {
+    "apiGroup": __cedar::String,
+    // "apiVersion": __cedar::String,
+    "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
+    "namespace"?: k8s::Namespace,
+    "resourceCombined": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "create" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "get" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "list" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "watch" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+}
+
+namespace k8s::nonresource {
+
+  entity NonResourceURL = {
+    "path": __cedar::String
+  };
+
+  action "*" appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+
+  action "get" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::nonresource::NonResourceURL],
+    context: {}
+  };
+}
+
+@apiGroup("")
+namespace core {
+
+  @kind("Node")
+  entity nodes = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "nodes"
+    "name": __cedar::String,
+    "request"?: core::VersionedNode,
+    "stored"?: core::VersionedNode
+  };
+
+  type VersionedNode = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Node"
+    "metadata"?: meta::V1ObjectMeta,
+    // TODO
+  };
+
+  @kind("Pod")
+  entity pods = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "pods"
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPod,
+    "stored"?: core::VersionedPod
+  };
+  type VersionedPod = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "metadata": meta::V1ObjectMeta,
+    "v1"?: core::V1Pod
+  };
+  entity V1Pod = {
+    "spec"?: core::V1PodSpec,
+    "status"?: core::V1PodStatus
+  };
+  type V1PodSpec = {
+    // lots of fields
+    nodeName: String,
+  };
+  type V1PodStatus = {
+    // lots of fields
+  };
+
+  @kind("Secret")
+  entity secrets = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "secrets"
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedSecret,
+    "stored"?: core::VersionedSecret
+  };
+  type VersionedSecret = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "metadata"?: meta::V1ObjectMeta,
+    "v1"?: core::V1Secret
+  };
+  entity V1Secret = {
+    "type": __cedar::String,
+    "data"?: meta::StringToStringMap,
+    "stringData"?: meta::StringToStringMap,
+    "immutable": __cedar::Bool,
+  };
+
+  @kind("Pod")
+  entity pods_status = {
+    "apiGroup": __cedar::String,          // always ""
+    "resourceCombined": __cedar::String,  // always "pods/status"
+    "name": __cedar::String,
+    "namespace": k8s::Namespace,
+    "request"?: core::VersionedPodStatus,
+    "stored"?: core::VersionedPodStatus
+  };
+  type VersionedPodStatus = {
+    "apiVersion": __cedar::String,        // always "v1"
+    "kind": __cedar::String,              // always "Pod"
+    "metadata"?: meta::V1ObjectMeta,
+    "v1"?: core::V1Pod
+  };
+}
+
+namespace meta {
+
+  entity UnknownString = {
+    "value": __cedar::String,
+  };
+
+  entity StringToStringMap = {
+    "keys": Set<__cedar::String>
+  } tags __cedar::String;
+
+  entity StringToStringSetMap = {
+    "keys": Set<__cedar::String>
+  } tags Set<__cedar::String>;
+
+  entity V1ObjectMeta = {
+    "annotations": meta::StringToStringMap,
+    "deleted": __cedar::Bool,
+    "finalizers": Set<__cedar::String>,
+    "labels": meta::StringToStringMap,
+    "uid"?: __cedar::String
+  };
+}

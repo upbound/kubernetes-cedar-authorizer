@@ -11,8 +11,8 @@ pub enum CedarToCelError {
     UnsupportedOperator(cedar_ast::BinaryOp),
     #[error("Unsupported Cedar extension function: {0}")]
     UnsupportedExtensionFunction(String),
-    #[error("CEL parser error: {0}")]
-    CELParseError(#[from] cel::parser::ParseError),
+//    #[error("CEL parser error: {0}")]
+//    CELParseError(#[from] cel::parser::ParseError),
 }
 
 pub trait EntityToCelVariableMapper {

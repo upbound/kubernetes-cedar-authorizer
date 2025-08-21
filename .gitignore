@@ -1,3 +1,7 @@
 /target
 old
 output/
+
+localdev/mount/apiserver-authz-config.yaml
+localdev/mount/certs
+localdev/mount/webhook-kubeconfig.yaml

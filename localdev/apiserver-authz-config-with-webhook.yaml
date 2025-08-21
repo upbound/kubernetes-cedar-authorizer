@@ -1,0 +1,24 @@
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: AuthorizationConfiguration
+authorizers:
+- type: Node
+  name: node
+- type: Webhook
+  name: cedar
+  webhook:
+    authorizedTTL: 10s
+    unauthorizedTTL: 10s
+    timeout: 3s
+    subjectAccessReviewVersion: v1
+    matchConditionSubjectAccessReviewVersion: v1
+    # NOTE: NoOpinion is just for development. 
+    # Production workloads should likely use `Deny`
+    failurePolicy: NoOpinion 
+    connectionInfo:
+      type: KubeConfigFile
+      kubeConfigFile: /kubernetes-cedar-authorizer/authorization-webhook-kubeconfig.yaml
+    matchConditions:
+    # don't intercept requests from kube-system service accounts
+    - expression: "!('system:serviceaccounts:kube-system' in request.groups)"
+- type: RBAC
+  name: rbac

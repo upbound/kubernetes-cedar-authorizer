@@ -141,6 +141,54 @@ A couple of critical features of Cedar are:
 - The typed schema, which allows for type-safe policies, and for the policy
   author to reason about the policy in the IDE using the [Cedar IDE plugin].
 
+## Quickstart
+
+Install [kind] v0.29.0 and [kubectl] v1.33.0, e.g. through [Homebrew] on macOS:
+
+```console
+$ brew install kind kubectl
+...
+$ kind version
+kind v0.29.0 go1.24.6 darwin/arm64
+$ kubectl version               
+Client Version: v1.33.4
+```
+
+You'll also need `make` and `docker` (or a CLI-compatible alternative, activate
+with e.g. `DOCKER=podman make ...`).
+
+Clone Lucas' Kubernetes fork, and checkout the `conditional_authz_2` branch:
+
+```bash
+cd .. # Go to the parent directory of this repository
+git clone https://github.com/luxas/kubernetes.git
+cd kubernetes
+git checkout conditional_authz_2
+cd ../kubernetes-cedar-authorizer
+```
+
+Compile Kubernetes from source:
+
+```bash
+kind build node-image /path/to/kubernetes/source --image kindest/node:luxas_conditional_authz_2_latest
+```
+
+Next, generate a self-signed certificate for the webhook server, and name the
+cert `server.crt` and the key `server.key`, and put them in the `localdev/mount/certs`
+directory. The certificate must be valid for the hostname `localhost`.
+
+Note: There is a thousand things that can fail when compiling Kubernetes from
+source. For example, if you're on a Mac, you most likely need to install gnu tar
+(`brew install gnu-tar`), and set your default shell to bash from homebrew
+(`brew install bash`, `sudo ln -s <bash install path> /usr/local/bin/bash`, and
+`chpass -s /usr/local/bin/bash`) in order for kubernetes to compile correctly.
+
+Finally, we are ready to build the webhook image and start kind:
+
+```bash
+make kind
+```
+
 ## Conditional Authorization
 
 As part of this experiment, the possibility of returning conditions from the
@@ -245,3 +293,6 @@ This project:
 [SMT-LIB]: https://smt-lib.org/
 [Cedar IDE plugin]: https://github.com/cedar-policy/vscode-cedar/
 [conditional_authz_2 Kubernetes branch]: https://github.com/luxas/kubernetes/tree/conditional_authz_2
+[Homebrew]: https://brew.sh/
+[kind]: https://kind.sigs.k8s.io/
+[kubectl]: https://kubernetes.io/docs/tasks/tools/#kubectl
