@@ -173,6 +173,10 @@ Compile Kubernetes from source:
 kind build node-image /path/to/kubernetes/source --image kindest/node:luxas_conditional_authz_2_latest
 ```
 
+Next, generate a self-signed certificate for the webhook server, and name the
+cert `server.crt` and the key `server.key`, and put them in the `localdev/mount/certs`
+directory. The certificate must be valid for the hostname `localhost`.
+
 Note: There is a thousand things that can fail when compiling Kubernetes from
 source. For example, if you're on a Mac, you most likely need to install gnu tar
 (`brew install gnu-tar`), and set your default shell to bash from homebrew
