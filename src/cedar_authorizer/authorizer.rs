@@ -1,14 +1,10 @@
 use cedar_policy_core::entities::Schema;
-use cedar_policy_core::extensions::Extensions;
-use cedar_policy_core::validator::json_schema::{
-    ActionEntityUID, CommonTypeId, NamespaceDefinition,
-};
-use cedar_policy_core::validator::{json_schema, RawName, ValidatorSchema};
+use cedar_policy_core::validator::json_schema::{CommonTypeId, NamespaceDefinition};
+use cedar_policy_core::validator::{json_schema, RawName};
 use cedar_policy_symcc::solver::Solver;
 use k8s_openapi::api::core::v1 as corev1;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 use kube::core::GroupVersion;
-use kube::runtime::reflector;
 use kube::{self};
 use smol_str::{SmolStr, ToSmolStr};
 use std::collections::HashSet;
@@ -25,14 +21,13 @@ use crate::cedar_authorizer::kube_invariants::{ActionCapability, DetailedDecisio
 use crate::cedar_authorizer::symcc;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
-    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
-    Reason, ResourceAttributes, Response, Verb,
+    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
+    ResourceAttributes, Response, Verb,
 };
 use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
-    ENTITY_NAMESPACE, ENTITY_OBJECTMETA, K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE,
-    PRINCIPAL_SERVICEACCOUNT, PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER,
-    RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
+    K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder, RecordBuilderImpl};
@@ -262,14 +257,15 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                                     // those cannot be supported before the API server is able to enforce conditions for such requests.
                                     // It might also be unintuitive that the precondition on namespace metadata existing, is that the API version is an exact match.
                                     // Given these specific circumstances when this field is available, it is hard to say whether it is more confusing than helpful.
-                                    match (
+                                    if let (true, true) = (
                                         record.attributes.contains_key("namespaceMetadata"),
                                         action_capability.supports_conditional_decision(),
                                     ) {
-                                        (true, true) => {
-                                            resource_builder.add_attr::<&str, PartialValue<&metav1::ObjectMeta>>("namespaceMetadata", PartialValue::Unknown);
-                                        }
-                                        (_, _) => (),
+                                        resource_builder
+                                            .add_attr::<&str, PartialValue<&metav1::ObjectMeta>>(
+                                                "namespaceMetadata",
+                                                PartialValue::Unknown,
+                                            );
                                     }
 
                                     match (
@@ -480,10 +476,7 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
             principal_entities
                 .into_iter()
                 .chain(resource_entities.into_iter())
-                .chain(std::iter::once((
-                    action_entity_uid.clone().into(),
-                    action_entity,
-                ))),
+                .chain(std::iter::once((action_entity_uid.clone(), action_entity))),
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -518,7 +511,7 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                         match self
                             .symcc_evaluator
                             .selector_conditions_are_authorized(
-                                &attrs,
+                                attrs,
                                 &reqenv,
                                 condition,
                                 unknown_jsonpaths_to_uid,
@@ -567,137 +560,127 @@ impl<
         C: Solver + Send + Sync,
     > KubernetesAuthorizer for CedarKubeAuthorizer<S, F, C>
 {
-    fn is_authorized(
-        &self,
-        mut attrs: Attributes,
-    ) -> impl std::future::Future<Output = Result<Response, AuthorizerError>> + Send {
-        async move {
-            let action_str = attrs.verb.to_string();
-            let cedar_ns_name = match &mut attrs.request_type {
-                RequestType::Resource(resource_attrs) => {
-                    // Lookup the action capabilities for the resource request. An error is returned if the action is not supported.
-                    let action_capability = self
-                        .policies
-                        .schema_ref()
-                        .get_action_capabilities(&K8S_NS, &action_str);
-                    if action_capability.supports_selectors() {
-                        // Populate the resource attributes from the field selectors, if present.
-                        resource_attrs.default_from_selectors()?;
-                    } else {
-                        resource_attrs.field_selector = None;
-                        resource_attrs.label_selector = None;
-                    }
-                    &K8S_NS
+    async fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
+        let action_str = attrs.verb.to_string();
+        let cedar_ns_name = match &mut attrs.request_type {
+            RequestType::Resource(resource_attrs) => {
+                // Lookup the action capabilities for the resource request. An error is returned if the action is not supported.
+                let action_capability = self
+                    .policies
+                    .schema_ref()
+                    .get_action_capabilities(&K8S_NS, &action_str);
+                if action_capability.supports_selectors() {
+                    // Populate the resource attributes from the field selectors, if present.
+                    resource_attrs.default_from_selectors()?;
+                } else {
+                    resource_attrs.field_selector = None;
+                    resource_attrs.label_selector = None;
                 }
-                RequestType::NonResource(_) => {
-                    // Lookup the action capabilities for the non-resource request. An error is returned if the action is not supported.
-                    &K8S_NONRESOURCE_NS
-                }
-            };
+                &K8S_NS
+            }
+            RequestType::NonResource(_) => {
+                // Lookup the action capabilities for the non-resource request. An error is returned if the action is not supported.
+                &K8S_NONRESOURCE_NS
+            }
+        };
 
-            let cedar_ns = self
-                .policies
-                .schema_ref()
-                .get_namespace(cedar_ns_name)
-                .ok_or_else(|| {
-                    AuthorizerError::UnexpectedSchemaShape(format!(
-                        "schema should have {cedar_ns_name:?} namespace registered"
-                    ))
-                })?;
+        let cedar_ns = self
+            .policies
+            .schema_ref()
+            .get_namespace(cedar_ns_name)
+            .ok_or_else(|| {
+                AuthorizerError::UnexpectedSchemaShape(format!(
+                    "schema should have {cedar_ns_name:?} namespace registered"
+                ))
+            })?;
 
-            let action_schemadef = match cedar_ns.actions.get(action_str.as_str()) {
-                Some(action_schemadef) => action_schemadef,
-                None => return Err(AuthorizerError::UnsupportedVerb(action_str)),
-            };
+        let action_schemadef = match cedar_ns.actions.get(action_str.as_str()) {
+            Some(action_schemadef) => action_schemadef,
+            None => return Err(AuthorizerError::UnsupportedVerb(action_str)),
+        };
 
-            match attrs.verb {
-                // If the action is Any, verify that all actions are unconditionally allowed.
-                Verb::Any => {
-                    let errors = Vec::new();
-                    let mut allowed_ids = HashSet::new();
-                    // TODO: Check the * action first, then others.
-                    // Deliberately shadow the action_str and action_schemadef variables so they aren't accidentally used.
-                    for (action_str, action_schemadef) in cedar_ns.actions.iter() {
-                        let resp = self
-                            .is_authorized_for_action(
-                                &attrs,
-                                action_str.as_str(),
-                                action_schemadef,
-                                &cedar_ns_name,
-                            )
-                            .await?;
-                        // TODO: Propagate errors?
-
-                        match resp {
-                            DetailedDecision::Allow(permitted_policy_ids) => {
-                                allowed_ids.extend(permitted_policy_ids.into_iter())
-                            }
-                            DetailedDecision::Conditional(conditions, _) => {
-                                return Ok(Response::no_opinion().with_errors(errors).with_reason(
-                                    Reason::not_unconditionally_allowed(action_str, &conditions),
-                                ))
-                            }
-                            DetailedDecision::Deny(forbidden_policy_ids) => {
-                                return Ok(Response::no_opinion().with_errors(errors).with_reason(
-                                    Reason::denied_by_policies(action_str, &forbidden_policy_ids),
-                                ))
-                            }
-                            // TODO: Add as reason that a specific action is not unconditionally allowed.
-                            DetailedDecision::NoOpinion => {
-                                return Ok(Response::no_opinion()
-                                    .with_errors(errors)
-                                    .with_reason(Reason::no_allow_policy_match(action_str)))
-                            }
-                        }
-                    }
-                    // TODO: Add all policies that allowed the action as reason?
-                    Ok(Response::allow().with_errors(errors))
-                }
-                // Semantics:
-                // - If there are any true denies, deny.
-                // (- If there are any folded true denies, deny.)
-                // We can add this optimization later.
-                // - If there are any residual denies (that do not fold to false), conditional
-                // TODO: Should we give full context here; i.e. including foldable residual forbid policies?
-                // In the beginning, we do not do this, but keep things simple.
-                // The permit policies could potentially just be folded into "true", if there is at least one true.
-                // - If there are any true allows, allow.
-                // - NOTE: Do not fold allows to true, only to false.
-                // - If there are any residual allows (that do not fold to false), conditional
-                //   At this point, it is known that there are no residual denies.
-                // - Otherwise (only false denies and allows, or none), no opinion.
-                // TODO: Maybe we want still to fold here too?
-                _ => {
-                    match self
+        match attrs.verb {
+            // If the action is Any, verify that all actions are unconditionally allowed.
+            Verb::Any => {
+                let errors = Vec::new();
+                let mut allowed_ids = HashSet::new();
+                // TODO: Check the * action first, then others.
+                // Deliberately shadow the action_str and action_schemadef variables so they aren't accidentally used.
+                for (action_str, action_schemadef) in cedar_ns.actions.iter() {
+                    let resp = self
                         .is_authorized_for_action(
                             &attrs,
-                            &action_str,
+                            action_str.as_str(),
                             action_schemadef,
-                            &cedar_ns_name,
+                            cedar_ns_name,
                         )
-                        .await?
-                    {
-                        // TODO: Propagate errors
-                        DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
-                            .with_reason(Reason::allowed_by_policies(
-                                &action_str,
-                                &permitted_policy_ids,
-                            ))),
-                        DetailedDecision::Deny(forbidden_policy_ids) => Ok(Response::no_opinion()
-                            .with_reason(Reason::denied_by_policies(
-                                &action_str,
-                                &forbidden_policy_ids,
-                            ))),
-                        DetailedDecision::Conditional(
-                            conditional_policies,
-                            unknown_jsonpaths_to_uid,
-                        ) => Ok(Response::conditional(
-                            conditional_policies,
-                            unknown_jsonpaths_to_uid,
-                        )),
-                        DetailedDecision::NoOpinion => Ok(Response::no_opinion()
-                            .with_reason(Reason::no_allow_policy_match(&action_str))),
+                        .await?;
+                    // TODO: Propagate errors?
+
+                    match resp {
+                        DetailedDecision::Allow(permitted_policy_ids) => {
+                            allowed_ids.extend(permitted_policy_ids.into_iter())
+                        }
+                        DetailedDecision::Conditional(conditions, _) => {
+                            return Ok(Response::no_opinion().with_errors(errors).with_reason(
+                                Reason::not_unconditionally_allowed(action_str, &conditions),
+                            ))
+                        }
+                        DetailedDecision::Deny(forbidden_policy_ids) => {
+                            return Ok(Response::no_opinion().with_errors(errors).with_reason(
+                                Reason::denied_by_policies(action_str, &forbidden_policy_ids),
+                            ))
+                        }
+                        // TODO: Add as reason that a specific action is not unconditionally allowed.
+                        DetailedDecision::NoOpinion => {
+                            return Ok(Response::no_opinion()
+                                .with_errors(errors)
+                                .with_reason(Reason::no_allow_policy_match(action_str)))
+                        }
                     }
+                }
+                // TODO: Add all policies that allowed the action as reason?
+                Ok(Response::allow().with_errors(errors))
+            }
+            // Semantics:
+            // - If there are any true denies, deny.
+            // (- If there are any folded true denies, deny.)
+            // We can add this optimization later.
+            // - If there are any residual denies (that do not fold to false), conditional
+            // TODO: Should we give full context here; i.e. including foldable residual forbid policies?
+            // In the beginning, we do not do this, but keep things simple.
+            // The permit policies could potentially just be folded into "true", if there is at least one true.
+            // - If there are any true allows, allow.
+            // - NOTE: Do not fold allows to true, only to false.
+            // - If there are any residual allows (that do not fold to false), conditional
+            //   At this point, it is known that there are no residual denies.
+            // - Otherwise (only false denies and allows, or none), no opinion.
+            // TODO: Maybe we want still to fold here too?
+            _ => {
+                match self
+                    .is_authorized_for_action(&attrs, &action_str, action_schemadef, cedar_ns_name)
+                    .await?
+                {
+                    // TODO: Propagate errors
+                    DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
+                        .with_reason(Reason::allowed_by_policies(
+                            &action_str,
+                            &permitted_policy_ids,
+                        ))),
+                    DetailedDecision::Deny(forbidden_policy_ids) => Ok(Response::no_opinion()
+                        .with_reason(Reason::denied_by_policies(
+                            &action_str,
+                            &forbidden_policy_ids,
+                        ))),
+                    DetailedDecision::Conditional(
+                        conditional_policies,
+                        unknown_jsonpaths_to_uid,
+                    ) => Ok(Response::conditional(
+                        conditional_policies,
+                        unknown_jsonpaths_to_uid,
+                    )),
+                    DetailedDecision::NoOpinion => Ok(Response::no_opinion()
+                        .with_reason(Reason::no_allow_policy_match(&action_str))),
                 }
             }
         }

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 
 use cedar_policy_core::{
-    ast::{Eid, EntityType, EntityUID, InternalName, Literal, Name, Value},
+    ast::{Eid, EntityType, EntityUID, Literal, Name, Value},
     tpe::entities::PartialEntity,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
@@ -277,9 +277,9 @@ impl IntoValueWithEntities for &metav1::ObjectMeta {
         HashMap<String, EntityUID>,
     ) {
         EntityBuilder::new()
-            .with_attr("labels", self.labels.as_ref().map(|m| m.clone()))
-            .with_attr("annotations", self.annotations.as_ref().map(|m| m.clone()))
-            .with_attr("finalizers", self.finalizers.as_ref().map(|s| s.clone()))
+            .with_attr("labels", self.labels.clone())
+            .with_attr("annotations", self.annotations.clone())
+            .with_attr("finalizers", self.finalizers.clone())
             .with_attr("uid", self.uid.as_ref().map(|s| s.to_smolstr()))
             .with_attr("deleted", self.deletion_timestamp.is_some())
             .build(ENTITY_OBJECTMETA.name.name())

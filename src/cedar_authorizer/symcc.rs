@@ -5,11 +5,7 @@ use crate::{
     k8s_authorizer::{self, Attributes, RequestType, SymbolicEvaluationError},
 };
 use cedar_policy_core::{ast, expr_builder::ExprBuilder};
-use cedar_policy_symcc::{
-    err::SolverError,
-    solver::{Decision, Solver},
-    CedarSymCompiler,
-};
+use cedar_policy_symcc::{err::SolverError, solver::Solver, CedarSymCompiler};
 use itertools::Itertools;
 use nonempty::NonEmpty;
 use smol_str::{SmolStr, ToSmolStr};
@@ -68,7 +64,7 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
         namespace_scoped: bool,
     ) -> Result<bool, SymbolicEvaluationError> {
         let cedar_public_api_schema_ref = self.schema.as_ref().as_ref();
-        let symenv = cedar_policy_symcc::SymEnv::new(cedar_public_api_schema_ref, &reqenv)?;
+        let symenv = cedar_policy_symcc::SymEnv::new(cedar_public_api_schema_ref, reqenv)?;
 
         // TODO: Can we make registering unknowns type-safe by using an enum?
 
@@ -136,14 +132,14 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
 
         let well_typed_object_selected = cedar_policy_symcc::WellTypedPolicies::from_policies(
             &object_selected,
-            &reqenv,
+            reqenv,
             cedar_public_api_schema_ref,
         )?;
         // Convert the kube_invariants::PolicySet to a cedar_policy::PolicySet.
         let is_authorized: cedar_policy::PolicySet = is_authorized.try_into()?;
         let well_typed_is_authorized = cedar_policy_symcc::WellTypedPolicies::from_policies(
             &is_authorized,
-            &reqenv,
+            reqenv,
             cedar_public_api_schema_ref,
         )?;
         // Enforce invariant that object_selected => is_authorized.
@@ -181,7 +177,7 @@ fn apply_field_selectors_to_expr(
         for field_selector in field_selectors {
             if let Some(expr) = field_selector_to_expr(
                 field_selector,
-                &unknown_jsonpaths_to_uid,
+                unknown_jsonpaths_to_uid,
                 api_version,
                 namespace_scoped,
             ) {
@@ -202,7 +198,7 @@ fn field_selector_to_expr(
     let key = field_selector
         .key
         .strip_prefix(".")
-        .unwrap_or_else(|| field_selector.key.as_str());
+        .unwrap_or(field_selector.key.as_str());
 
     let (field_exists, field) = match key.strip_prefix("metadata.") {
         Some("name") => {
@@ -280,9 +276,9 @@ fn apply_label_selectors_to_expr(
     unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
 ) -> ast::Expr<()> {
     if let Some(label_selectors) = label_selectors {
-        if label_selectors.len() > 0 {
+        if !label_selectors.is_empty() {
             if let Some(metadata) =
-                unknown_jsonpaths_to_uid.get(format!("resource.stored.metadata").as_str())
+                unknown_jsonpaths_to_uid.get("resource.stored.metadata".to_string().as_str())
             {
                 let metadata_entity = ast::Expr::val(metadata.clone());
 

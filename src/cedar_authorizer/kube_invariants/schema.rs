@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::format,
     sync::LazyLock,
 };
 
@@ -11,12 +10,8 @@ use cedar_policy_core::{
 
 use cedar_policy_core::ast::{InternalName, Name, UnreservedId};
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
-use smol_str::SmolStr;
 
-use crate::{
-    k8s_authorizer::AuthorizerError,
-    schema::core::{K8S_NONRESOURCE_NS, K8S_NS},
-};
+use crate::schema::core::{K8S_NONRESOURCE_NS, K8S_NS};
 
 use super::err::SchemaError;
 
@@ -122,8 +117,8 @@ impl Schema {
         self.schema.0.get(namespace)
     }
 
-    pub fn get_action_capabilities<'a>(
-        &'a self,
+    pub fn get_action_capabilities(
+        &self,
         namespace: &Option<ast::Name>,
         action: &str,
     ) -> ActionCapability {
@@ -253,6 +248,7 @@ impl AsRef<cedar_policy::Schema> for Schema {
 /// The request_object capability specifies whether the action contains a request object.
 /// The stored_object capability specifies whether the action contains a stored object.
 /// The selectors and request/stored_object capabilities are mutually exclusive.
+#[derive(Default)]
 pub struct ActionCapability {
     selectors: bool,
     request_object: bool,
@@ -289,16 +285,6 @@ impl ActionCapability {
             selectors: false,
             request_object,
             stored_object,
-        }
-    }
-}
-
-impl Default for ActionCapability {
-    fn default() -> Self {
-        Self {
-            selectors: false,
-            request_object: false,
-            stored_object: false,
         }
     }
 }
