@@ -11,7 +11,6 @@ pub struct Selector {
     // For a required field, Exists is always true, and NotExists is always false.
     // TODO: This should probably be populated at another layer, when a schema is available.
     // pub nullable: bool,
-
     pub op: SelectorPredicate,
 }
 

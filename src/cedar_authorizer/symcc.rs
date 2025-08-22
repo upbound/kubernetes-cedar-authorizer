@@ -1,7 +1,8 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crate::{
-    cedar_authorizer::kube_invariants, k8s_authorizer::{self, Attributes, RequestType, SymbolicEvaluationError},
+    cedar_authorizer::kube_invariants,
+    k8s_authorizer::{self, Attributes, RequestType, SymbolicEvaluationError},
 };
 use cedar_policy_core::{ast, expr_builder::ExprBuilder};
 use cedar_policy_symcc::{
@@ -9,8 +10,8 @@ use cedar_policy_symcc::{
     solver::{Decision, Solver},
     CedarSymCompiler,
 };
-use nonempty::NonEmpty;
 use itertools::Itertools;
+use nonempty::NonEmpty;
 use smol_str::{SmolStr, ToSmolStr};
 
 use super::fork::LocalSolver;
@@ -68,8 +69,6 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
     ) -> Result<bool, SymbolicEvaluationError> {
         let cedar_public_api_schema_ref = self.schema.as_ref().as_ref();
         let symenv = cedar_policy_symcc::SymEnv::new(cedar_public_api_schema_ref, &reqenv)?;
-        
-        
 
         // TODO: Can we make registering unknowns type-safe by using an enum?
 
@@ -105,8 +104,18 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
 
         match &attrs.request_type {
             RequestType::Resource(resource_attrs) => {
-                object_selected_expr = apply_field_selectors_to_expr(object_selected_expr, resource_attrs.field_selector.as_ref(), &unknown_jsonpaths_to_uid, api_version, namespace_scoped);
-                object_selected_expr = apply_label_selectors_to_expr(object_selected_expr, resource_attrs.label_selector.as_ref(), &unknown_jsonpaths_to_uid);
+                object_selected_expr = apply_field_selectors_to_expr(
+                    object_selected_expr,
+                    resource_attrs.field_selector.as_ref(),
+                    &unknown_jsonpaths_to_uid,
+                    api_version,
+                    namespace_scoped,
+                );
+                object_selected_expr = apply_label_selectors_to_expr(
+                    object_selected_expr,
+                    resource_attrs.label_selector.as_ref(),
+                    &unknown_jsonpaths_to_uid,
+                );
             }
             RequestType::NonResource(_) => (),
         }
@@ -116,9 +125,14 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
         println!("is_authorized: {is_authorized}");
 
         // TODO: Cedar to implement FromStr for PolicyID, and then use that.
-        let object_selected = cedar_policy::PolicySet::from_policies([
-            ast::Policy::from_when_clause(ast::Effect::Permit, object_selected_expr, ast::PolicyID::from_string("object_selected"), None).into()
-        ])?;
+        let object_selected =
+            cedar_policy::PolicySet::from_policies([ast::Policy::from_when_clause(
+                ast::Effect::Permit,
+                object_selected_expr,
+                ast::PolicyID::from_string("object_selected"),
+                None,
+            )
+            .into()])?;
 
         let well_typed_object_selected = cedar_policy_symcc::WellTypedPolicies::from_policies(
             &object_selected,
@@ -156,10 +170,21 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
     }
 }
 
-fn apply_field_selectors_to_expr(mut object_selected_expr: ast::Expr<()>, field_selectors: Option<&Vec<k8s_authorizer::Selector>>, unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>, api_version: &str, namespace_scoped: bool) -> ast::Expr<()> {
+fn apply_field_selectors_to_expr(
+    mut object_selected_expr: ast::Expr<()>,
+    field_selectors: Option<&Vec<k8s_authorizer::Selector>>,
+    unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
+    api_version: &str,
+    namespace_scoped: bool,
+) -> ast::Expr<()> {
     if let Some(field_selectors) = field_selectors {
         for field_selector in field_selectors {
-            if let Some(expr) = field_selector_to_expr(field_selector, &unknown_jsonpaths_to_uid, api_version, namespace_scoped) {
+            if let Some(expr) = field_selector_to_expr(
+                field_selector,
+                &unknown_jsonpaths_to_uid,
+                api_version,
+                namespace_scoped,
+            ) {
                 object_selected_expr = object_selected_expr.and(expr);
             }
         }
@@ -167,29 +192,52 @@ fn apply_field_selectors_to_expr(mut object_selected_expr: ast::Expr<()>, field_
     object_selected_expr
 }
 
-fn field_selector_to_expr(field_selector: &k8s_authorizer::Selector, unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>, api_version: &str, namespace_scoped: bool) -> Option<ast::Expr<()>> {
+fn field_selector_to_expr(
+    field_selector: &k8s_authorizer::Selector,
+    unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
+    api_version: &str,
+    namespace_scoped: bool,
+) -> Option<ast::Expr<()>> {
     // Trim "." prefix, if any. TODO: This invariant should probably be in the parsing layer.
-    let key = field_selector.key.strip_prefix(".").unwrap_or_else(|| field_selector.key.as_str());
+    let key = field_selector
+        .key
+        .strip_prefix(".")
+        .unwrap_or_else(|| field_selector.key.as_str());
 
     let (field_exists, field) = match key.strip_prefix("metadata.") {
         Some("name") => {
             // Note: If resource.name does not exist in unknown_jsonpaths_to_uid, it means that the variable is not used in is_authorized.
             // If that is the case, then there is no need to restrict the variable's scope in object_selected, as whatever the variable
             // value is, it won't affect the is_authorized value. Thus return None if not referenced.
-            (ast::Expr::val(true), ast::Expr::val(unknown_jsonpaths_to_uid.get("resource.name")?.clone()).get_attr("value"))
+            (
+                ast::Expr::val(true),
+                ast::Expr::val(unknown_jsonpaths_to_uid.get("resource.name")?.clone())
+                    .get_attr("value"),
+            )
         }
         // TODO: Is the handling of namespace/cluster-scoped resources here correct?
-        Some("namespace") => {
-            (ast::Expr::val(namespace_scoped), ast::Expr::val(unknown_jsonpaths_to_uid.get("resource.namespace")?.clone()).get_attr("value"))
-        }
+        Some("namespace") => (
+            ast::Expr::val(namespace_scoped),
+            ast::Expr::val(unknown_jsonpaths_to_uid.get("resource.namespace")?.clone())
+                .get_attr("value"),
+        ),
         // TODO: Do we need to support other metadata fields?
         // For now, ignoring the requirement here is sound, because objectSelected becomes wider than if this was implemented.
         // TODO: Check if there are any metadata fieldselectors.
-        Some(_)  => return None,
+        Some(_) => return None,
         _ => {
-            let object = ast::Expr::val(unknown_jsonpaths_to_uid.get(format!("resource.stored.{api_version}").as_str())?.clone());
+            let object = ast::Expr::val(
+                unknown_jsonpaths_to_uid
+                    .get(format!("resource.stored.{api_version}").as_str())?
+                    .clone(),
+            );
 
-            let field_exists = super::fork::construct_exprs_extended_has::<ast::ExprBuilder<()>>(object.clone(), &NonEmpty::collect(key.split(".").map(|s| s.to_smolstr())).expect("str.split yields at least one item"), None);
+            let field_exists = super::fork::construct_exprs_extended_has::<ast::ExprBuilder<()>>(
+                object.clone(),
+                &NonEmpty::collect(key.split(".").map(|s| s.to_smolstr()))
+                    .expect("str.split yields at least one item"),
+                None,
+            );
 
             let mut field = object;
             for field_part in key.split(".") {
@@ -208,26 +256,34 @@ fn field_selector_to_expr(field_selector: &k8s_authorizer::Selector, unknown_jso
         k8s_authorizer::SelectorPredicate::NotExists => {
             // !(object has spec.nodeName)
             Some(field_exists.not())
-        },
+        }
         k8s_authorizer::SelectorPredicate::In(values) => {
             // TODO: Implement more than just string support; needs to check the type of the variable from the schema.
             // TODO: We might want to optimize this when values.len() == 1 to use == or !=
-            let specified_set = ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
+            let specified_set =
+                ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
             // object has spec.nodeName && ["node1", "node2"].contains(object.spec.nodeName)
             Some(field_exists.and(specified_set.contains(field)))
         }
         k8s_authorizer::SelectorPredicate::NotIn(values) => {
-            let specified_set = ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
+            let specified_set =
+                ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
             // object has spec.nodeName && !["node1", "node2"].contains(object.spec.nodeName)
             Some(field_exists.and(specified_set.contains(field).not()))
         }
     }
 }
 
-fn apply_label_selectors_to_expr(mut object_selected_expr: ast::Expr<()>, label_selectors: Option<&Vec<k8s_authorizer::Selector>>, unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>) -> ast::Expr<()> {
+fn apply_label_selectors_to_expr(
+    mut object_selected_expr: ast::Expr<()>,
+    label_selectors: Option<&Vec<k8s_authorizer::Selector>>,
+    unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
+) -> ast::Expr<()> {
     if let Some(label_selectors) = label_selectors {
         if label_selectors.len() > 0 {
-            if let Some(metadata) = unknown_jsonpaths_to_uid.get(format!("resource.stored.metadata").as_str()) {
+            if let Some(metadata) =
+                unknown_jsonpaths_to_uid.get(format!("resource.stored.metadata").as_str())
+            {
                 let metadata_entity = ast::Expr::val(metadata.clone());
 
                 let labels_guard = metadata_entity.clone().has_attr("labels");
@@ -244,8 +300,13 @@ fn apply_label_selectors_to_expr(mut object_selected_expr: ast::Expr<()>, label_
     object_selected_expr
 }
 
-fn label_selector_to_expr(label_selector: &k8s_authorizer::Selector, labels_entity: ast::Expr<()>) -> ast::Expr<()> {
-    let label_exists = labels_entity.clone().has_tag(ast::Expr::val(label_selector.key.to_smolstr()));
+fn label_selector_to_expr(
+    label_selector: &k8s_authorizer::Selector,
+    labels_entity: ast::Expr<()>,
+) -> ast::Expr<()> {
+    let label_exists = labels_entity
+        .clone()
+        .has_tag(ast::Expr::val(label_selector.key.to_smolstr()));
     match &label_selector.op {
         k8s_authorizer::SelectorPredicate::Exists => {
             // labels_entity.hasTag(key)
@@ -254,17 +315,29 @@ fn label_selector_to_expr(label_selector: &k8s_authorizer::Selector, labels_enti
         k8s_authorizer::SelectorPredicate::NotExists => {
             // !(labels_entity.hasTag(key))
             label_exists.not()
-        },
+        }
         k8s_authorizer::SelectorPredicate::In(values) => {
             // TODO: We might want to optimize this when values.len() == 1 to use == or !=
-            let specified_set = ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
+            let specified_set =
+                ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
             // labels_entity.hasTag(key) && ["node1", "node2"].contains(labels_entity.getTag(key))
-            label_exists.and(specified_set.contains(labels_entity.get_tag(ast::Expr::val(label_selector.key.to_smolstr()))))
+            label_exists.and(
+                specified_set.contains(
+                    labels_entity.get_tag(ast::Expr::val(label_selector.key.to_smolstr())),
+                ),
+            )
         }
         k8s_authorizer::SelectorPredicate::NotIn(values) => {
-            let specified_set = ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
+            let specified_set =
+                ast::Expr::set(values.iter().sorted().map(|v| ast::Expr::val(v.as_str())));
             // labels_entity.hasTag(key) && !["node1", "node2"].contains(labels_entity.getTag(key))
-            label_exists.and(specified_set.contains(labels_entity.get_tag(ast::Expr::val(label_selector.key.to_smolstr()))).not())
+            label_exists.and(
+                specified_set
+                    .contains(
+                        labels_entity.get_tag(ast::Expr::val(label_selector.key.to_smolstr())),
+                    )
+                    .not(),
+            )
         }
     }
 }
@@ -320,8 +393,6 @@ impl RestrictedExprBuilder {
         self.expr
     }
 }*/
-
-
 
 mod test {
     #[test]
@@ -407,9 +478,22 @@ mod test {
                 Some(r#"((core::V1Node::"foo" has "spec") && ((core::V1Node::"foo"["spec"]) has "nodeName")) && (["node1", "node2"].contains((core::V1Node::"foo"["spec"])["nodeName"]))"#.to_string()),
             ),
         ];
-        for (test_name, field_selector, unknown_jsonpaths_to_uid, api_version, namespace_scoped, expected_expr) in tests {
+        for (
+            test_name,
+            field_selector,
+            unknown_jsonpaths_to_uid,
+            api_version,
+            namespace_scoped,
+            expected_expr,
+        ) in tests
+        {
             println!("test_name: {test_name}");
-            let got = super::field_selector_to_expr(&field_selector, &unknown_jsonpaths_to_uid, api_version, namespace_scoped);
+            let got = super::field_selector_to_expr(
+                &field_selector,
+                &unknown_jsonpaths_to_uid,
+                api_version,
+                namespace_scoped,
+            );
             if let Some(expr) = got.clone() {
                 println!("got: {expr}");
             }
@@ -425,32 +509,53 @@ mod test {
         let tests = vec![
             (
                 "None if resource.stored.metadata.labels.foo is not referenced in is_authorized",
-                vec![k8s_authorizer::Selector{
+                vec![k8s_authorizer::Selector {
                     key: "foo".to_string(),
-                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["bar".to_string(), "baz".to_string()])),
+                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from([
+                        "bar".to_string(),
+                        "baz".to_string(),
+                    ])),
                 }],
                 HashMap::new(),
                 "true",
             ),
             (
                 "Simple case, with In predicate",
-                vec![k8s_authorizer::Selector{
+                vec![k8s_authorizer::Selector {
                     key: "foo".to_string(),
-                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["bar".to_string(), "baz".to_string()])),
+                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from([
+                        "bar".to_string(),
+                        "baz".to_string(),
+                    ])),
                 }],
-                HashMap::from([("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"foo""#.parse().unwrap())]),
+                HashMap::from([(
+                    "resource.stored.metadata".to_string(),
+                    r#"meta::V1ObjectMeta::"foo""#.parse().unwrap(),
+                )]),
                 r#"(true && (meta::V1ObjectMeta::"foo" has "labels")) && (((meta::V1ObjectMeta::"foo"["labels"]).hasTag("foo")) && (["bar", "baz"].contains((meta::V1ObjectMeta::"foo"["labels"]).getTag("foo"))))"#,
             ),
             (
                 "One In and one NotIn predicate; metadata has labels not duplicated",
-                vec![k8s_authorizer::Selector{
-                    key: "foo".to_string(),
-                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["bar".to_string(), "baz".to_string()])),
-                }, k8s_authorizer::Selector{
-                    key: "bar".to_string(),
-                    op: k8s_authorizer::SelectorPredicate::NotIn(HashSet::from(["qux".to_string(), "quux".to_string()])),
-                }],
-                HashMap::from([("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"foo""#.parse().unwrap())]),
+                vec![
+                    k8s_authorizer::Selector {
+                        key: "foo".to_string(),
+                        op: k8s_authorizer::SelectorPredicate::In(HashSet::from([
+                            "bar".to_string(),
+                            "baz".to_string(),
+                        ])),
+                    },
+                    k8s_authorizer::Selector {
+                        key: "bar".to_string(),
+                        op: k8s_authorizer::SelectorPredicate::NotIn(HashSet::from([
+                            "qux".to_string(),
+                            "quux".to_string(),
+                        ])),
+                    },
+                ],
+                HashMap::from([(
+                    "resource.stored.metadata".to_string(),
+                    r#"meta::V1ObjectMeta::"foo""#.parse().unwrap(),
+                )]),
                 r#"(
                     (
                      true && 
@@ -473,8 +578,15 @@ mod test {
         for (test_name, label_selectors, unknown_jsonpaths_to_uid, expected_expr) in tests {
             println!("test_name: {test_name}");
             let mut object_selected_expr = ast::Expr::val(true);
-            object_selected_expr = super::apply_label_selectors_to_expr(object_selected_expr, Some(&label_selectors), &unknown_jsonpaths_to_uid);
-            assert_eq!(object_selected_expr.to_string(), remove_whitespace(expected_expr.to_string()));
+            object_selected_expr = super::apply_label_selectors_to_expr(
+                object_selected_expr,
+                Some(&label_selectors),
+                &unknown_jsonpaths_to_uid,
+            );
+            assert_eq!(
+                object_selected_expr.to_string(),
+                remove_whitespace(expected_expr.to_string())
+            );
         }
     }
 

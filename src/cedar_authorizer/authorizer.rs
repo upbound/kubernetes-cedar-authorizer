@@ -157,17 +157,26 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
             .build(ENTITY_NAMESPACE.name.name()))
     }*/
 
-    fn construct_resource(&self, attrs: &Attributes, action_capability: &ActionCapability) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
+    fn construct_resource(
+        &self,
+        attrs: &Attributes,
+        action_capability: &ActionCapability,
+    ) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
         match &attrs.request_type {
-            RequestType::NonResource(nonresource_attrs) => Ok((EntityBuilder::new()
-                .with_attr(
-                    "path",
-                    match nonresource_attrs.path {
-                        StarWildcardStringSelector::Any => PartialValue::Unknown,
-                        _ => PartialValue::Known(nonresource_attrs.path.to_string().to_smolstr()),
-                    },
-                )
-                .build(RESOURCE_NONRESOURCEURL.name.name()), None)),
+            RequestType::NonResource(nonresource_attrs) => Ok((
+                EntityBuilder::new()
+                    .with_attr(
+                        "path",
+                        match nonresource_attrs.path {
+                            StarWildcardStringSelector::Any => PartialValue::Unknown,
+                            _ => {
+                                PartialValue::Known(nonresource_attrs.path.to_string().to_smolstr())
+                            }
+                        },
+                    )
+                    .build(RESOURCE_NONRESOURCEURL.name.name()),
+                None,
+            )),
             RequestType::Resource(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()
                     .with_attr(
@@ -214,7 +223,7 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                             resource_type,
                         )) => {
                             let record = entity_to_record(resource_type)?;
-                            
+
                             // Only populate the namespace field if there is such an attribute in the schema.
                             // The namespace is never set for a cluster-scoped resource
                             // If the SAR specifies some exact namespace for a cluster-scoped resource,
@@ -253,22 +262,30 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                                     // those cannot be supported before the API server is able to enforce conditions for such requests.
                                     // It might also be unintuitive that the precondition on namespace metadata existing, is that the API version is an exact match.
                                     // Given these specific circumstances when this field is available, it is hard to say whether it is more confusing than helpful.
-                                    match (record.attributes.contains_key("namespaceMetadata"), action_capability.supports_conditional_decision()) {
+                                    match (
+                                        record.attributes.contains_key("namespaceMetadata"),
+                                        action_capability.supports_conditional_decision(),
+                                    ) {
                                         (true, true) => {
                                             resource_builder.add_attr::<&str, PartialValue<&metav1::ObjectMeta>>("namespaceMetadata", PartialValue::Unknown);
                                         }
                                         (_, _) => (),
                                     }
 
-                                    match (record.attributes.contains_key("request"), action_capability.has_request_object()) {
+                                    match (
+                                        record.attributes.contains_key("request"),
+                                        action_capability.has_request_object(),
+                                    ) {
                                         (true, true) => {
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                             .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
-                                            let versioned_record = type_to_record(&versioned_record.ty)?;
-                                            let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
+                                            let versioned_record =
+                                                type_to_record(&versioned_record.ty)?;
+                                            let specific_version_attr = versioned_record
+                                                .attributes
+                                                .get(api_version.as_str());
                                             resource_builder.add_attr(
                                                 "request",
-                                        
                                                     RecordBuilderImpl::new()
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
                                                     .with_attr("kind", Some(kind.clone()))
@@ -280,19 +297,25 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                                                     // TODO: Use partialvalue here and unknown/unset instead of this Option<Unknown> style
                                                     .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
                                                 );
-                                        },
+                                        }
                                         // For verbs that do not carry request data, make "resource has request" return false.
                                         (true, false) => (),
                                         // If the type does not have a request, ok, don't add anything.
                                         (false, _) => (),
                                     };
-                                    
-                                    match (record.attributes.contains_key("stored"), action_capability.has_stored_object()) {
+
+                                    match (
+                                        record.attributes.contains_key("stored"),
+                                        action_capability.has_stored_object(),
+                                    ) {
                                         (true, true) => {
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                                     .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
-                                            let versioned_record = type_to_record(&versioned_record.ty)?;
-                                            let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
+                                            let versioned_record =
+                                                type_to_record(&versioned_record.ty)?;
+                                            let specific_version_attr = versioned_record
+                                                .attributes
+                                                .get(api_version.as_str());
 
                                             resource_builder.add_attr(
                                                 "stored",
@@ -306,7 +329,7 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                                                     })
                                                     .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
                                                 );
-                                        },
+                                        }
                                         // For verbs that do not have stored data, make "resource has stored" return false.
                                         (true, false) => (),
                                         // If the type does not have a stored object, ok, don't add anything.
@@ -318,14 +341,19 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
                                 StarWildcardStringSelector::Any => (),
                             }
 
-                            Ok((resource_builder.build(
-                                Name::unqualified_name(typed_resource_entity_id)
-                                    .qualify_with_name(resource_type_namespace_name.as_ref()),
-                            ), Some(record.attributes.contains_key("namespace"))))
+                            Ok((
+                                resource_builder.build(
+                                    Name::unqualified_name(typed_resource_entity_id)
+                                        .qualify_with_name(resource_type_namespace_name.as_ref()),
+                                ),
+                                Some(record.attributes.contains_key("namespace")),
+                            ))
                         }
                         // Untyped k8s::Resource case, due to to the resource requested not being in the schema,
                         // e.g. due to discovery not being up to date, or the requested resource begin "virtual".
-                        None => self.finish_building_untyped_resource(resource_builder, resource_attrs),
+                        None => {
+                            self.finish_building_untyped_resource(resource_builder, resource_attrs)
+                        }
                     },
                     // Untyped k8s::Resource case, due to multiple possible resource type matches.
                     _ => self.finish_building_untyped_resource(resource_builder, resource_attrs),
@@ -339,22 +367,27 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
         resource_builder: EntityBuilder,
         resource_attrs: &ResourceAttributes,
     ) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
-        Ok((resource_builder
-            .with_attr(
-                "namespace",
-                match &resource_attrs.namespace {
-                    // Here we cannot distinguish between namespace being "any" or "unset". We assume that the namespace is "any",
-                    // as we're arbitrarily selecting across a (possibly infinite) set of k8s resource types.
-                    // However, in theory all matched resources could be cluster-scoped (imagine apiGroup="foo" and resource="*"),
-                    // where all resources in apiGroup="foo" are cluster-scoped. If so, it would be better to make "resource has namespace"
-                    // queries return "false", but this we cannot know, we lose a little bit of precision here.
-                    // TODO: Create a Cedar issue to discuss whether "foo has bar" should be able to be unknown, which is what we want here.
-                    EmptyWildcardStringSelector::Any => PartialValue::Unknown,
-                    EmptyWildcardStringSelector::Exact(ns_name) => PartialValue::Known(ns_name.to_smolstr())
-                },
-            )
-            // None here means that we don't know whether the resource is namespace-scoped or cluster-scoped.
-            .build(RESOURCE_RESOURCE.name.name()), None))
+        Ok((
+            resource_builder
+                .with_attr(
+                    "namespace",
+                    match &resource_attrs.namespace {
+                        // Here we cannot distinguish between namespace being "any" or "unset". We assume that the namespace is "any",
+                        // as we're arbitrarily selecting across a (possibly infinite) set of k8s resource types.
+                        // However, in theory all matched resources could be cluster-scoped (imagine apiGroup="foo" and resource="*"),
+                        // where all resources in apiGroup="foo" are cluster-scoped. If so, it would be better to make "resource has namespace"
+                        // queries return "false", but this we cannot know, we lose a little bit of precision here.
+                        // TODO: Create a Cedar issue to discuss whether "foo has bar" should be able to be unknown, which is what we want here.
+                        EmptyWildcardStringSelector::Any => PartialValue::Unknown,
+                        EmptyWildcardStringSelector::Exact(ns_name) => {
+                            PartialValue::Known(ns_name.to_smolstr())
+                        }
+                    },
+                )
+                // None here means that we don't know whether the resource is namespace-scoped or cluster-scoped.
+                .build(RESOURCE_RESOURCE.name.name()),
+            None,
+        ))
     }
 
     fn find_schema_entity_for_api_group_and_resource<'a>(
@@ -402,7 +435,8 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
             .get_action_capabilities(cedar_ns_name, action);
         // TODO: Unit-test the construct_principal/resource functions.
         let principal_entity = self.construct_principal(attrs)?;
-        let (resource_entity, namespace_scoped) = self.construct_resource(attrs, &action_capability)?;
+        let (resource_entity, namespace_scoped) =
+            self.construct_resource(attrs, &action_capability)?;
 
         let principal_entity_uid = principal_entity.uid().clone();
         let resource_entity_uid = resource_entity.uid().clone();
@@ -464,20 +498,16 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
 
                 // Union all the unknown jsonpaths.
                 let unknown_jsonpaths_to_uid = unknown_jsonpaths_to_uid
-                .into_iter()
-                .chain(principal_jsonpaths)
-                .chain(resource_jsonpaths)
-                .collect();
+                    .into_iter()
+                    .chain(principal_jsonpaths)
+                    .chain(resource_jsonpaths)
+                    .collect();
 
                 // For conditional authorization to be supported, apiGroup, apiVersion, and resource must be exact matches.
                 // TODO: Should label selector authorization be allowed, even though we don't know the resource type?
                 if let Some((_, api_version, _)) = attrs.supports_conditional_authorization() {
-
                     if action_capability.supports_conditional_decision() {
-                        DetailedDecision::Conditional(
-                            condition,
-                            unknown_jsonpaths_to_uid,
-                        )
+                        DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
                     } else if action_capability.supports_selectors() {
                         let reqenv = cedar_policy::RequestEnv::new(
                             principal_entity_uid.entity_type().clone().into(),
@@ -487,13 +517,28 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
 
                         match self
                             .symcc_evaluator
-                            .selector_conditions_are_authorized(&attrs, &reqenv, condition, unknown_jsonpaths_to_uid, &api_version, namespace_scoped.unwrap_or(true))
+                            .selector_conditions_are_authorized(
+                                &attrs,
+                                &reqenv,
+                                condition,
+                                unknown_jsonpaths_to_uid,
+                                &api_version,
+                                namespace_scoped.unwrap_or(true),
+                            )
                             .await?
                         {
                             // TODO: Fill in these, although we don't know exactly which allow policy fired.
-                            true => DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string("conditional_authorization")])),
+                            true => {
+                                DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
+                                    "conditional_authorization",
+                                )]))
+                            }
                             // TODO: Fill in these, although we don't know exactly which deny policy fired; or if it was due to no matching allow rules.
-                            false => DetailedDecision::Deny(Vec::from([ast::PolicyID::from_string("conditional_authorization")])),
+                            false => {
+                                DetailedDecision::Deny(Vec::from([ast::PolicyID::from_string(
+                                    "conditional_authorization",
+                                )]))
+                            }
                         }
                     } else {
                         // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.

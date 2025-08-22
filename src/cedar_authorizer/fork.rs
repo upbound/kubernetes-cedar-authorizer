@@ -1,16 +1,16 @@
 use cedar_policy_core::{expr_builder::ExprBuilder, parser::Loc};
-use smol_str::SmolStr;
 use nonempty::NonEmpty;
+use smol_str::SmolStr;
 
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    process::{Child, ChildStdin, ChildStdout, Command},
-};
-use std::{path::Path, process::Stdio};
 use cedar_policy_symcc::{
     err::SolverError,
     solver::{Decision, Solver},
     SmtLibScript,
+};
+use std::{path::Path, process::Stdio};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
+    process::{Child, ChildStdin, ChildStdout, Command},
 };
 
 // NOTE: This is a copy of the original function in cedar-policy-core.
@@ -68,14 +68,13 @@ pub(super) fn construct_exprs_extended_has<Build: ExprBuilder>(
         .0
 }
 
-
 /// Implements `Solver` by launching an SMT solver in a new process and
 /// communicating with it
-/// 
+///
 /// Note: This is a modified copy of the original struct in cedar-policy-symcc.
 /// Filename: cedar/cedar-policy-symcc/src/symcc/solver.rs
 /// The code is Apache-2.0 licensed by the Cedar contributors.
-/// 
+///
 /// This LocalSolver is slightly modified to drop the solver process when the
 /// LocalSolver is dropped. I'm not sure if that happens with the original
 /// LocalSolver. In any case, once it is made sure that the Cedar upstream
