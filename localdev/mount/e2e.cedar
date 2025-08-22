@@ -9,6 +9,9 @@ permit(
     resource.request.v1.type == "crossplane.io/connection-secret"
 };
 
+// CEL rule v1: has(object.type) && object.type == "crossplane.io/connection-secret"
+// CEL rule v2: has(object.type2) && object.type2 == "crossplane.io/connection-secret"
+
 permit(
     principal,
     action == k8s::Action::"create",

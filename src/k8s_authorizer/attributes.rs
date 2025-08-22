@@ -104,15 +104,6 @@ impl Verb {
         // As per Kubernetes upstream impl.
         matches!(self, Verb::Get | Verb::List | Verb::Watch)
     }
-
-    pub fn supports_selectors(&self) -> bool {
-        // As per Kubernetes upstream impl.
-        match self {
-            // TODO: Figure out if we actually want to use the selectors for deletecollection or not, as we get all individual delete events
-            Verb::List | Verb::Watch | Verb::DeleteCollection => true,
-            _ => false,
-        }
-    }
 }
 
 #[derive(PartialEq)]
@@ -123,6 +114,7 @@ pub enum OneOrAll<T> {
 }
 
 /// A value that when string-encoded is either "*" (matching anything) or a string (matching exactly).
+#[derive(Debug)]
 pub enum StarWildcardStringSelector {
     Any,
     Exact(String),
@@ -148,6 +140,7 @@ impl Display for StarWildcardStringSelector {
 }
 
 /// A value that when string-encoded is either "" (matching anything) or a string (matching exactly).
+#[derive(Debug)]
 pub enum EmptyWildcardStringSelector {
     Any,
     Exact(String),
@@ -173,6 +166,7 @@ impl Display for EmptyWildcardStringSelector {
     }
 }
 
+#[derive(Debug)]
 pub enum CombinedResource {
     Any,
 
@@ -274,11 +268,14 @@ impl Display for CombinedResource {
     }
 }
 
+#[derive(Debug)]
 pub struct ResourceAttributes {
     // The namespace of the object, if a request is for a REST object.
     // Currently, there is no distinction between no namespace and all namespaces
     // "" (empty) is empty for cluster-scoped resources
     // "" (empty) means "all" for namespace scoped resources from a SubjectAccessReview or SelfSubjectAccessReview
+    // TODO: Actually use a multi-state enum here, which can be Any, In(Vec<String>), or NotIn(Vec<String>)
+    // TODO: Would it be possible (or even make sense) for SAR senders to distinguish between "unset" and "any" namespace?
     pub namespace: EmptyWildcardStringSelector,
 
     pub resource: CombinedResource,
@@ -286,6 +283,7 @@ pub struct ResourceAttributes {
     // name returns the name of the object as parsed off the request.  This will not be present for all request types, but
     // will be present for: get, update, delete
     // "" (empty) means all.
+    // TODO: Actually use a multi-state enum here, which can be Any, In(Vec<String>), or NotIn(Vec<String>)
     pub name: EmptyWildcardStringSelector,
 
     // The group of the resource, if a request is for a REST object.
@@ -301,12 +299,84 @@ pub struct ResourceAttributes {
     // ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
     // It returns an error if the field selector cannot be parsed.
     // The returned requirements must be treated as readonly and not modified.
+    // TODO: Use field selectors to authorize impersonation requests in a fine-grained way with only one SAR
+    // The username is either both or either encoded as the resource name, and .user.username In (lucas),
+    // .user.groups In (admin, dev),
+    // .user.uid In (1234567890)
+    // .user.extra[example.org/foo] In (bar, baz), and
+    // .request.verb In (get, list, watch, create, update, patch, delete, deletecollection, connect)
+    // .request.resource In (pods, nodes, namespaces, secrets, configmaps, etc.)
+    // .request.apiGroup    In (core, apps, etc.)
+    // etc. To be consistent with VAP, maybe refer to the user as .request.user instead of top-level
     pub field_selector: Option<Vec<Selector>>,
 
     // ParseLabelSelector is lazy, thread-safe, and stores the parsed result and error.
     // It returns an error if the label selector cannot be parsed.
     // The returned requirements must be treated as readonly and not modified.
     pub label_selector: Option<Vec<Selector>>,
+}
+
+impl ResourceAttributes {
+    // TODO: Should we validate to only allow only field selectors for specific verbs?
+    // TODO: The more generic solution here is to allow multiple values for a field selector,
+    // get a residual, and use the SAT/SMT/symbolic compiler method to make sure that all possible values
+    // are authorized.
+    pub fn default_from_selectors(&mut self) -> Result<(), ParseError> {
+        if let Some(field_selectors) = &self.field_selector {
+            for field_selector in field_selectors {
+                match field_selector.key.as_str() {
+                    // Populate the name field from the field selector, if present, like Kubernetes does.
+                    "metadata.name" => {
+                        match (&self.name, field_selector.exact_match()) {
+                            // Fold the field selector value into the spec requirement, just like Kubernetes RequestInfo code does.
+                            (EmptyWildcardStringSelector::Any, Some(fieldselector_name)) => {
+                                self.name = EmptyWildcardStringSelector::Exact(fieldselector_name);
+                            }
+                            // No requirements, nothing to do.
+                            (EmptyWildcardStringSelector::Any, None) => (),
+                            // If name is specified both in the SAR spec and in the field selector, they must match.
+                            (
+                                EmptyWildcardStringSelector::Exact(spec_name),
+                                Some(fieldselector_name),
+                            ) => {
+                                if spec_name.as_str() != fieldselector_name {
+                                    return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.name is specified both on the SubjectAccessReview spec ({spec_name}) and in the field selector ({fieldselector_name}), they must match")));
+                                }
+                            }
+                            // This is the usual case, name is specified in the SAR spec, but no field selector is present.
+                            (EmptyWildcardStringSelector::Exact(_), None) => (),
+                        }
+                    }
+                    // Populate the namespace field from the field selector in the similar manner, however, UNLIKE Kubernetes.
+                    // We here choose to be consistent with the way we populate the name field, and not Kubernetes.
+                    "metadata.namespace" => {
+                        match (&self.namespace, field_selector.exact_match()) {
+                            // Fold the field selector value into the spec requirement.
+                            (EmptyWildcardStringSelector::Any, Some(fieldselector_namespace)) => {
+                                self.namespace =
+                                    EmptyWildcardStringSelector::Exact(fieldselector_namespace);
+                            }
+                            // No requirements, nothing to do.
+                            (EmptyWildcardStringSelector::Any, None) => (),
+                            // If namespace is specified both in the SAR spec and in the field selector, they must match.
+                            (
+                                EmptyWildcardStringSelector::Exact(spec_namespace),
+                                Some(fieldselector_namespace),
+                            ) => {
+                                if spec_namespace.as_str() != fieldselector_namespace {
+                                    return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.namespace is specified both on the SubjectAccessReview spec ({spec_namespace}) and in the field selector ({fieldselector_namespace}), they must match")));
+                                }
+                            }
+                            // This is the usual case, namespace is specified in the SAR spec, but no field selector is present.
+                            (EmptyWildcardStringSelector::Exact(_), None) => (),
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct UserInfo {

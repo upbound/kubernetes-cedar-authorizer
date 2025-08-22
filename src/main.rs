@@ -5,7 +5,7 @@ use axum::{
 };
 use itertools::Itertools;
 use kubernetes_cedar_authorizer::{
-    cedar_authorizer::{self, kubestore::KubeStoreImpl},
+    cedar_authorizer::{self, kubestore::KubeStoreImpl, symcc::LocalSolverFactory},
     k8s_authorizer::{self, KubernetesAuthorizer},
 };
 
@@ -135,7 +135,7 @@ async fn run() -> Result<(), SetupError> {
     .map_err(SetupError::todo)?;
 
     let authorizer = Arc::new(
-        cedar_authorizer::CedarKubeAuthorizer::new(policies, namespace_store)
+        cedar_authorizer::CedarKubeAuthorizer::new(policies, namespace_store, LocalSolverFactory)
             .map_err(SetupError::todo)?,
     );
 
@@ -190,6 +190,8 @@ impl SetupError {
 
 type CedarKubeAuthorizer = cedar_authorizer::authorizer::CedarKubeAuthorizer<
     cedar_authorizer::kubestore::KubeStoreImpl<corev1::Namespace>,
+    cedar_authorizer::symcc::LocalSolverFactory,
+    cedar_authorizer::LocalSolver,
 >;
 
 async fn healthz_handler() -> &'static str {
@@ -207,7 +209,7 @@ async fn authorize_handler(
     Json(review): Json<SubjectAccessReview>,
 ) -> Result<Json<SubjectAccessReview>, k8s_authorizer::AuthorizerError> {
     let attrs = k8s_authorizer::Attributes::from_subject_access_review(&review)?;
-    let is_authorized = authorizer.is_authorized(attrs)?;
+    let is_authorized = authorizer.is_authorized(attrs).await?;
     let status = Some(SubjectAccessReviewStatus {
         allowed: is_authorized.decision == k8s_authorizer::Decision::Allow,
         denied: match is_authorized.decision {

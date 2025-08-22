@@ -40,6 +40,8 @@ impl PolicySet {
         for p in policies.policies() {
             // INVARIANT: Make sure that no deny policies could error.
             if p.effect() == ast::Effect::Forbid && Self::expr_could_error(&p.condition()) {
+                // TODO: Instead of returning an error, we should just remove the policy, and return warnings about what policies were skipped.
+                // The caller can then decide on how serious it is if some policy errored.
                 return Err(SchemaError::PolicyCouldError(p.id().clone()));
             }
 
@@ -52,6 +54,10 @@ impl PolicySet {
             if !p.is_static() {
                 return Err(SchemaError::PolicyIsNotStatic(p.id().clone()));
             }
+
+            // INVARIANT: Make sure that there are no 'resource.<attr> like "*"' expressions.
+            // Also make sure that when like is used, it can only match prefix or suffixes.
+            // TODO: This is not yet implemented.
         }
 
         // Rewrite the policies to be compatible with Typed Partial Evaluation, according to rewrites in the schema.
@@ -347,6 +353,13 @@ impl PolicySet {
 impl AsRef<ast::PolicySet> for PolicySet {
     fn as_ref(&self) -> &ast::PolicySet {
         &self.policies
+    }
+}
+
+impl TryFrom<PolicySet> for cedar_policy::PolicySet {
+    type Error = cedar_policy::PolicySetError;
+    fn try_from(ps: PolicySet) -> Result<Self, Self::Error> {
+        ps.policies.try_into()
     }
 }
 

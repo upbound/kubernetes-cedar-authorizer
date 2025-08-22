@@ -392,15 +392,11 @@ dependencies = [
 [[package]]
 name = "cedar-policy"
 version = "4.5.1"
-source = "git+https://github.com/cedar-policy/cedar.git?rev=82784864c01b5096cb73885dd2df5643074355ed#82784864c01b5096cb73885dd2df5643074355ed"
 dependencies = [
  "cedar-policy-core",
  "cedar-policy-formatter",
  "itertools 0.14.0",
- "lalrpop-util",
- "lazy_static",
  "miette",
- "nonempty",
  "ref-cast",
  "semver",
  "serde",
@@ -413,7 +409,6 @@ dependencies = [
 [[package]]
 name = "cedar-policy-core"
 version = "4.5.1"
-source = "git+https://github.com/cedar-policy/cedar.git?rev=82784864c01b5096cb73885dd2df5643074355ed#82784864c01b5096cb73885dd2df5643074355ed"
 dependencies = [
  "chrono",
  "educe",
@@ -421,7 +416,6 @@ dependencies = [
  "itertools 0.14.0",
  "lalrpop",
  "lalrpop-util",
- "lazy_static",
  "miette",
  "nonempty",
  "ref-cast",
@@ -439,11 +433,9 @@ dependencies = [
 [[package]]
 name = "cedar-policy-formatter"
 version = "4.5.1"
-source = "git+https://github.com/cedar-policy/cedar.git?rev=82784864c01b5096cb73885dd2df5643074355ed#82784864c01b5096cb73885dd2df5643074355ed"
 dependencies = [
  "cedar-policy-core",
  "itertools 0.14.0",
- "lazy_static",
  "logos",
  "miette",
  "pretty",
@@ -454,7 +446,6 @@ dependencies = [
 [[package]]
 name = "cedar-policy-symcc"
 version = "0.1.0"
-source = "git+https://github.com/cedar-policy/cedar.git?rev=82784864c01b5096cb73885dd2df5643074355ed#82784864c01b5096cb73885dd2df5643074355ed"
 dependencies = [
  "async-recursion",
  "cedar-policy",
@@ -1589,6 +1580,7 @@ dependencies = [
  "itertools 0.14.0",
  "k8s-openapi",
  "kube",
+ "nonempty",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-stdout",

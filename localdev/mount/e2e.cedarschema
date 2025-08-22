@@ -147,10 +147,17 @@ namespace core {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
     "metadata"?: meta::V1ObjectMeta,
-    "v1"?: core::V1Secret
+    "v1"?: core::V1Secret,
+    "v2"?: core::V2Secret
   };
   entity V1Secret = {
     "type": __cedar::String,
+    "data"?: meta::StringToStringMap,
+    "stringData"?: meta::StringToStringMap,
+    "immutable": __cedar::Bool,
+  };
+  entity V2Secret = {
+    "type2": __cedar::String,
     "data"?: meta::StringToStringMap,
     "stringData"?: meta::StringToStringMap,
     "immutable": __cedar::Bool,

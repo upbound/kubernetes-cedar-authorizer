@@ -9,7 +9,8 @@ pub struct Selector {
     pub key: String,
     // Does the key point to a required value, or optional/nullable one?
     // For a required field, Exists is always true, and NotExists is always false.
-    pub nullable: bool,
+    // TODO: This should probably be populated at another layer, when a schema is available.
+    // pub nullable: bool,
 
     pub op: SelectorPredicate,
 }
@@ -28,11 +29,19 @@ impl Selector {
         }
     }
 
-    pub fn in_values(key: &str, nullable: bool, values: impl IntoIterator<Item = String>) -> Self {
+    #[cfg(test)]
+    pub fn in_values(key: &str, values: impl IntoIterator<Item = String>) -> Self {
         Self {
             key: key.to_string(),
-            nullable,
             op: SelectorPredicate::In(values.into_iter().collect()),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn not_in_values(key: &str, values: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            key: key.to_string(),
+            op: SelectorPredicate::NotIn(values.into_iter().collect()),
         }
     }
 }
@@ -50,8 +59,9 @@ impl TryFrom<FieldSelectorRequirement> for Selector {
     fn try_from(value: FieldSelectorRequirement) -> std::result::Result<Self, Self::Error> {
         Ok(Self {
             key: value.key,
-            // All fields pointed to today are required, or casted to concrete values
-            nullable: false,
+            // TODO: How to handle discrepancies between field selectors and the schema?
+            // Not all field selectors are required in the schema, and some casts are non-trivial.
+            // See: https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/4358-custom-resource-field-selectors/README.md
             op: match value.operator.as_str() {
                 "In" => SelectorPredicate::In(
                     value
@@ -93,8 +103,6 @@ impl TryFrom<LabelSelectorRequirement> for Selector {
     fn try_from(value: LabelSelectorRequirement) -> std::result::Result<Self, Self::Error> {
         Ok(Self {
             key: value.key,
-            // All labels are nullable, they might not be defined for a given object
-            nullable: true,
             op: match value.operator.as_str() {
                 "In" => SelectorPredicate::In(
                     value

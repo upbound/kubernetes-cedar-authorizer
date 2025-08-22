@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
@@ -48,16 +48,6 @@ impl EntityBuilder {
         }
     }
 
-    pub(super) fn unknown_string(optional_value: Option<String>) -> BuiltEntity {
-        let entity_type = "meta::UnknownString".parse().unwrap();
-        match optional_value {
-            Some(value) => EntityBuilder::new()
-                .with_attr("value", Some(value.as_str()))
-                .build(entity_type),
-            None => Self::build_unknown(entity_type),
-        }
-    }
-
     #[must_use]
     pub(super) fn with_tags(mut self, tags: BTreeMap<SmolStr, Value>) -> Self {
         self.entity_tags = Some(tags);
@@ -78,9 +68,9 @@ impl EntityBuilder {
     }
 
     // TODO: Make this cleaner?
-    pub(super) fn build_unknown_internal_name(entity_type_name: InternalName) -> BuiltEntity {
+    /*pub(super) fn build_unknown_internal_name(entity_type_name: InternalName) -> BuiltEntity {
         Self::build_unknown(entity_type_name.to_string().parse().unwrap())
-    }
+    }*/
 
     pub(super) fn build(mut self, entity_type_name: Name) -> BuiltEntity {
         let eid = match self.entity_eid {
@@ -107,12 +97,8 @@ impl EntityBuilder {
     }
 }
 impl RecordBuilder for EntityBuilder {
-    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
-        &mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) {
-        self.record_builder.add_attr(key, optional_value);
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(&mut self, key: K, value: V) {
+        self.record_builder.add_attr(key, value);
     }
 }
 
@@ -120,9 +106,9 @@ pub trait IntoValueWithEntities {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     );
 }
 
@@ -133,11 +119,31 @@ impl IntoValueWithEntities for &str {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
-        (self.into(), std::iter::empty(), std::iter::empty())
+        (
+            Some(Literal::String(self.to_smolstr()).into()),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+}
+
+impl IntoValueWithEntities for &String {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        (
+            Some(Literal::String(self.to_smolstr()).into()),
+            HashMap::new(),
+            HashMap::new(),
+        )
     }
 }
 
@@ -145,14 +151,14 @@ impl IntoValueWithEntities for SmolStr {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
         (
-            Literal::String(self).into(),
-            std::iter::empty(),
-            std::iter::empty(),
+            Some(Literal::String(self).into()),
+            HashMap::new(),
+            HashMap::new(),
         )
     }
 }
@@ -161,174 +167,191 @@ impl IntoValueWithEntities for bool {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
-        (self.into(), std::iter::empty(), std::iter::empty())
+        (Some(self.into()), HashMap::new(), HashMap::new())
     }
 }
 
-impl IntoValueWithEntities for Vec<&str> {
+impl IntoValueWithEntities for Vec<String> {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
         (
-            Value::set_of_lits(self.into_iter().map(|s| s.into()), None),
-            std::iter::empty(),
-            std::iter::empty(),
+            Some(Value::set_of_lits(self.into_iter().map(|s| s.into()), None)),
+            HashMap::new(),
+            HashMap::new(),
         )
+    }
+}
+
+impl IntoValueWithEntities for HashSet<SmolStr> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        (
+            Some(Value::set_of_lits(self.into_iter().map(|s| s.into()), None)),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+}
+
+impl IntoValueWithEntities for BTreeMap<String, String> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        EntityBuilder::new()
+            .with_attr(
+                "keys",
+                self.keys().map(|s| s.into()).collect::<HashSet<_>>(),
+            )
+            .with_tags(
+                self.into_iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect(),
+            )
+            .build(MAP_STRINGSTRING.0.name())
+            .into_value_with_entities()
+    }
+}
+
+impl IntoValueWithEntities for BTreeMap<String, Vec<String>> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        EntityBuilder::new()
+            .with_attr(
+                "keys",
+                self.keys().map(|s| s.into()).collect::<HashSet<_>>(),
+            )
+            .with_tags(
+                // TODO: If only one value, add a "first" attribute to the entity.
+                self.into_iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect(),
+            )
+            .build(MAP_STRINGSTRINGSET.0.name())
+            .into_value_with_entities()
+    }
+}
+
+// Some(T) is treated as a known value, None is treated as an unset value.
+impl<T: IntoValueWithEntities> IntoValueWithEntities for Option<T> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        self.map(|t| t.into_value_with_entities())
+            .unwrap_or((None, HashMap::new(), HashMap::new()))
+    }
+}
+
+impl IntoValueWithEntities for &metav1::ObjectMeta {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
+    ) {
+        EntityBuilder::new()
+            .with_attr("labels", self.labels.as_ref().map(|m| m.clone()))
+            .with_attr("annotations", self.annotations.as_ref().map(|m| m.clone()))
+            .with_attr("finalizers", self.finalizers.as_ref().map(|s| s.clone()))
+            .with_attr("uid", self.uid.as_ref().map(|s| s.to_smolstr()))
+            .with_attr("deleted", self.deletion_timestamp.is_some())
+            .build(ENTITY_OBJECTMETA.name.name())
+            .into_value_with_entities()
     }
 }
 
 pub trait RecordBuilder: Sized {
     /// Adds an attribute to the record being built, if Some(value).
     /// Any entities associated with the value are added to the record builder.
-    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
-        &mut self,
-        key: K,
-        optional_value: Option<V>,
-    );
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(&mut self, key: K, value: V);
 
-    fn add_string_to_string_map<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        map_option: Option<&BTreeMap<String, String>>,
+    #[must_use]
+    fn with_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(mut self, key: K, value: V) -> Self {
+        self.add_attr(key, value);
+        self
+    }
+}
+
+pub enum PartialValue<V: IntoValueWithEntities> {
+    Known(V),
+    Unknown,
+    Unset,
+}
+
+pub trait HasUnknownType {
+    fn unknown_type() -> Name;
+}
+
+impl HasUnknownType for &metav1::ObjectMeta {
+    fn unknown_type() -> Name {
+        "meta::V1ObjectMeta".parse().unwrap()
+    }
+}
+
+impl IntoValueWithEntities for PartialValue<SmolStr> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
-        // Note: Maps are usually required in the schema, but can be empty, so fold None into an empty map.
-        let map = match map_option {
-            Some(map) => map.clone(),
-            None => BTreeMap::new(),
-        };
-        self.add_attr(
-            key,
-            Some(
-                EntityBuilder::new()
-                    .with_string_set("keys", Some(map.keys().map(|s| s.as_str())))
-                    .with_tags(map.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
-                    .build(MAP_STRINGSTRING.0.name()),
-            ),
-        );
+        let entity_type = "meta::UnknownString".parse().unwrap();
+        match self {
+            PartialValue::Known(v) => EntityBuilder::new()
+                .with_attr("value", v)
+                .build(entity_type)
+                .into_value_with_entities(),
+            PartialValue::Unknown => {
+                EntityBuilder::build_unknown(entity_type).into_value_with_entities()
+            }
+            PartialValue::Unset => (None, HashMap::new(), HashMap::new()),
+        }
     }
+}
 
-    fn add_string_to_stringset_map<K: Into<SmolStr>>(
-        &mut self,
-        key: K,
-        map_option: Option<&BTreeMap<String, Vec<String>>>,
+impl<T: IntoValueWithEntities + HasUnknownType> IntoValueWithEntities for PartialValue<T> {
+    fn into_value_with_entities(
+        self,
+    ) -> (
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
-        // Note: Maps are usually required in the schema, but can be empty, so fold None into an empty map.
-        let map = match map_option {
-            Some(map) => map.clone(),
-            None => BTreeMap::new(),
-        };
-        self.add_attr(
-            key,
-            Some(
-                EntityBuilder::new()
-                    .with_string_set("keys", Some(map.keys().map(|s| s.as_str())))
-                    .with_tags(
-                        // TODO: If only one value, add a "first" attribute to the entity.
-                        map.into_iter()
-                            .map(|(k, v)| {
-                                (
-                                    k.into(),
-                                    Value::set_of_lits(v.into_iter().map(|s| s.into()), None),
-                                )
-                            })
-                            .collect(),
-                    )
-                    .build(MAP_STRINGSTRINGSET.0.name()),
-            ),
-        );
-    }
-
-    fn add_string_set<'a, K: Into<SmolStr>, V: IntoIterator<Item = &'a str>>(
-        &mut self,
-        key: K,
-        set_option: Option<V>,
-    ) {
-        // Note: Sets are usually required in the schema, but can be empty, so fold None into an empty set.
-        let set_vec: Vec<&str> = match set_option {
-            Some(set) => set.into_iter().collect(),
-            None => Vec::new(),
-        };
-        self.add_attr(key, Some(set_vec));
-    }
-
-    fn add_metadata(&mut self, metadata_option: Option<&metav1::ObjectMeta>) {
-        self.add_attr(
-            "metadata",
-            match metadata_option {
-                Some(metadata) => Some(
-                    EntityBuilder::new()
-                        .with_string_to_string_map("labels", metadata.labels.as_ref())
-                        .with_string_to_string_map("annotations", metadata.annotations.as_ref())
-                        .with_string_set(
-                            "finalizers",
-                            metadata
-                                .finalizers
-                                .as_ref()
-                                .map(|s| s.iter().map(|s| s.as_str())),
-                        )
-                        .with_attr("uid", metadata.uid.as_deref())
-                        .with_attr("deleted", Some(metadata.deletion_timestamp.is_some()))
-                        .build(ENTITY_OBJECTMETA.name.name()),
-                ),
-                None => Some(EntityBuilder::build_unknown_internal_name(
-                    ENTITY_OBJECTMETA.name.name().into(),
-                )),
-            },
-        );
-    }
-
-    #[must_use]
-    fn with_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
-        mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) -> Self {
-        self.add_attr(key, optional_value);
-        self
-    }
-
-    #[must_use]
-    fn with_string_to_string_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, String>>,
-    ) -> Self {
-        self.add_string_to_string_map(key, map);
-        self
-    }
-
-    #[must_use]
-    fn with_string_to_stringset_map<K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        map: Option<&BTreeMap<String, Vec<String>>>,
-    ) -> Self {
-        self.add_string_to_stringset_map(key, map);
-        self
-    }
-
-    #[must_use]
-    fn with_string_set<'a, K: Into<SmolStr>>(
-        mut self,
-        key: K,
-        set: Option<impl IntoIterator<Item = &'a str>>,
-    ) -> Self {
-        self.add_string_set(key, set);
-        self
-    }
-
-    #[must_use]
-    fn with_metadata(mut self, metadata_option: Option<&metav1::ObjectMeta>) -> Self {
-        self.add_metadata(metadata_option);
-        self
+        match self {
+            PartialValue::Known(v) => v.into_value_with_entities(),
+            PartialValue::Unknown => {
+                EntityBuilder::build_unknown(T::unknown_type()).into_value_with_entities()
+            }
+            PartialValue::Unset => (None, HashMap::new(), HashMap::new()),
+        }
     }
 }
 
@@ -339,13 +362,9 @@ pub(super) struct RecordBuilderImpl {
 }
 
 impl RecordBuilder for RecordBuilderImpl {
-    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(
-        &mut self,
-        key: K,
-        optional_value: Option<V>,
-    ) {
-        if let Some(v) = optional_value {
-            let (value, entities, unknown_jsonpaths_to_uid) = v.into_value_with_entities();
+    fn add_attr<K: Into<SmolStr>, V: IntoValueWithEntities>(&mut self, key: K, into_value: V) {
+        let (value, entities, unknown_jsonpaths_to_uid) = into_value.into_value_with_entities();
+        if let Some(value) = value {
             let key_smolstr = key.into();
             self.unknown_jsonpaths_to_uid
                 .extend(add_level_to_unknown_jsonpaths(
@@ -365,14 +384,14 @@ impl IntoValueWithEntities for RecordBuilderImpl {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
         (
-            Value::record(self.entity_attrs.unwrap_or_default(), None),
-            self.entities.into_iter(),
-            self.unknown_jsonpaths_to_uid.into_iter(),
+            Some(Value::record(self.entity_attrs.unwrap_or_default(), None)),
+            self.entities,
+            self.unknown_jsonpaths_to_uid,
         )
     }
 }
@@ -397,14 +416,14 @@ impl IntoValueWithEntities for BuiltEntity {
     fn into_value_with_entities(
         self,
     ) -> (
-        Value,
-        impl IntoIterator<Item = (EntityUID, PartialEntity)>,
-        impl IntoIterator<Item = (String, EntityUID)>,
+        Option<Value>,
+        HashMap<EntityUID, PartialEntity>,
+        HashMap<String, EntityUID>,
     ) {
         (
-            self.uid.into(),
-            self.entities.into_iter(),
-            self.unknown_jsonpaths_to_uid.into_iter(),
+            Some(self.uid.into()),
+            self.entities,
+            self.unknown_jsonpaths_to_uid,
         )
     }
 }
@@ -428,7 +447,7 @@ impl BuiltEntity {
 }
 fn add_level_to_unknown_jsonpaths(
     level_name: &str,
-    unknown_jsonpaths_to_uid: impl IntoIterator<Item = (String, EntityUID)>,
+    unknown_jsonpaths_to_uid: HashMap<String, EntityUID>,
 ) -> HashMap<String, EntityUID> {
     unknown_jsonpaths_to_uid
         .into_iter()

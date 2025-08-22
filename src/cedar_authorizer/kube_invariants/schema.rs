@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::format,
     sync::LazyLock,
 };
 
@@ -10,8 +11,12 @@ use cedar_policy_core::{
 
 use cedar_policy_core::ast::{InternalName, Name, UnreservedId};
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
+use smol_str::SmolStr;
 
-use crate::schema::core::{K8S_NONRESOURCE_NS, K8S_NS};
+use crate::{
+    k8s_authorizer::AuthorizerError,
+    schema::core::{K8S_NONRESOURCE_NS, K8S_NS},
+};
 
 use super::err::SchemaError;
 
@@ -29,6 +34,10 @@ static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
                 "meta::UnknownString".parse().unwrap(),
             ),
             ("name".to_string(), "meta::UnknownString".parse().unwrap()),
+            (
+                "namespace".to_string(),
+                "meta::UnknownString".parse().unwrap(),
+            ),
             ("path".to_string(), "meta::UnknownString".parse().unwrap()),
         ])
     });
@@ -36,7 +45,8 @@ static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
 #[derive(Clone)]
 pub struct Schema {
     schema: Fragment<RawName>,
-    schema_validator: ValidatorSchema,
+    public_api_schema: cedar_policy::Schema,
+    action_capabilities: HashMap<(Option<ast::Name>, &'static str), ActionCapability>,
 }
 
 impl Schema {
@@ -52,9 +62,56 @@ impl Schema {
             &STATIC_RESOURCE_ATTRIBUTE_REWRITES,
         )?;
 
+        let validator_schema: cedar_policy_core::validator::ValidatorSchema =
+            schema.clone().try_into()?;
+
         Ok(Self {
-            schema: schema.clone(),
-            schema_validator: schema.try_into()?,
+            schema,
+            public_api_schema: validator_schema.into(),
+            // TODO: Compute this from the schema, so that extension verbs can utilize the capabilities.
+            action_capabilities: HashMap::from([
+                // Get doesn't support any of these fancy features. Selectors could maybe be added in the future to be consistent with list, watch.
+                ((K8S_NS.clone(), "get"), Default::default()),
+                // List, watch, deletecollection support selectors.
+                ((K8S_NS.clone(), "list"), ActionCapability::with_selectors()),
+                (
+                    (K8S_NS.clone(), "watch"),
+                    ActionCapability::with_selectors(),
+                ),
+                (
+                    (K8S_NS.clone(), "deletecollection"),
+                    ActionCapability::with_selectors(),
+                ),
+                (
+                    (K8S_NS.clone(), "impersonate"),
+                    ActionCapability::with_selectors(),
+                ),
+                // Create and connect only have a request object.
+                (
+                    (K8S_NS.clone(), "create"),
+                    ActionCapability::with_objects(true, false),
+                ),
+                (
+                    (K8S_NS.clone(), "connect"),
+                    ActionCapability::with_objects(true, false),
+                ),
+                // Update and patch have both a request object and a stored object.
+                (
+                    (K8S_NS.clone(), "update"),
+                    ActionCapability::with_objects(true, true),
+                ),
+                (
+                    (K8S_NS.clone(), "patch"),
+                    ActionCapability::with_objects(true, true),
+                ),
+                // Delete only has a stored object.
+                (
+                    (K8S_NS.clone(), "delete"),
+                    ActionCapability::with_objects(false, true),
+                ),
+                // Anything not in this list supports none of these capabilities.
+                // For example, none of the non-resource actions supports any of these capabilities.
+            ]),
         })
     }
 
@@ -63,6 +120,17 @@ impl Schema {
         namespace: &Option<ast::Name>,
     ) -> Option<&json_schema::NamespaceDefinition<RawName>> {
         self.schema.0.get(namespace)
+    }
+
+    pub fn get_action_capabilities<'a>(
+        &'a self,
+        namespace: &Option<ast::Name>,
+        action: &str,
+    ) -> ActionCapability {
+        self.action_capabilities
+            .get(&(namespace.clone(), action))
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn rewritten_resource_attributes(&self) -> &HashMap<String, RawName> {
@@ -169,7 +237,69 @@ impl AsRef<Fragment<RawName>> for Schema {
 
 impl AsRef<ValidatorSchema> for Schema {
     fn as_ref(&self) -> &ValidatorSchema {
-        &self.schema_validator
+        self.public_api_schema.as_ref()
+    }
+}
+
+impl AsRef<cedar_policy::Schema> for Schema {
+    fn as_ref(&self) -> &cedar_policy::Schema {
+        &self.public_api_schema
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Capabilities of an action.
+/// The selectors capability specifies whether the action supports label and field selectors.
+/// The request_object capability specifies whether the action contains a request object.
+/// The stored_object capability specifies whether the action contains a stored object.
+/// The selectors and request/stored_object capabilities are mutually exclusive.
+pub struct ActionCapability {
+    selectors: bool,
+    request_object: bool,
+    stored_object: bool,
+}
+
+impl ActionCapability {
+    pub fn supports_conditional_decision(&self) -> bool {
+        self.request_object || self.stored_object
+    }
+
+    pub fn supports_selectors(&self) -> bool {
+        self.selectors
+    }
+
+    pub fn has_request_object(&self) -> bool {
+        self.request_object
+    }
+
+    pub fn has_stored_object(&self) -> bool {
+        self.stored_object || self.selectors
+    }
+
+    pub fn with_selectors() -> Self {
+        Self {
+            selectors: true,
+            request_object: false,
+            stored_object: false,
+        }
+    }
+
+    pub fn with_objects(request_object: bool, stored_object: bool) -> Self {
+        Self {
+            selectors: false,
+            request_object,
+            stored_object,
+        }
+    }
+}
+
+impl Default for ActionCapability {
+    fn default() -> Self {
+        Self {
+            selectors: false,
+            request_object: false,
+            stored_object: false,
+        }
     }
 }
 

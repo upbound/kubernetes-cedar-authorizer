@@ -47,6 +47,7 @@ mod schema;
 pub use err::*;
 pub use policyset::PolicySet;
 pub use residual::{DetailedDecision, PartialResponseNew};
+pub use schema::ActionCapability;
 pub use schema::Schema;
 
 use cedar_policy_core::ast;

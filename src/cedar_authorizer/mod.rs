@@ -3,6 +3,8 @@ pub mod cel;
 mod entitybuilder;
 pub mod kube_invariants;
 pub mod kubestore;
-mod symcc;
+pub mod symcc;
+mod fork;
 
 pub use authorizer::CedarKubeAuthorizer;
+pub use fork::LocalSolver;
