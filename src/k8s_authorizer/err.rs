@@ -1,4 +1,14 @@
 #[derive(Debug, thiserror::Error)]
+pub enum SymbolicEvaluationError {
+    #[error(transparent)]
+    SymccError(#[from] cedar_policy_symcc::err::Error),
+    #[error(transparent)]
+    PolicySetError(#[from] cedar_policy::PolicySetError),
+    #[error(transparent)]
+    SolverFactoryError(#[from] crate::cedar_authorizer::symcc::SolverFactoryError),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum AuthorizerError {
     #[error("verb {0} is not supported")]
     UnsupportedVerb(String),
@@ -13,8 +23,6 @@ pub enum AuthorizerError {
     TPEError(#[from] cedar_policy_core::tpe::err::TPEError),
     #[error(transparent)]
     EntitiesError(Box<cedar_policy_core::tpe::err::EntitiesError>),
-    #[error("No Kubernetes namespace found in schema")]
-    NoKubernetesNamespace,
     #[error(transparent)]
     EarlyEvaluationError(#[from] crate::cedar_authorizer::kube_invariants::EarlyEvaluationError),
 
@@ -28,6 +36,10 @@ pub enum AuthorizerError {
     CedarToCelError(#[from] crate::cedar_authorizer::cel::CedarToCelError),
     #[error(transparent)]
     SerdeJsonError(#[from] serde_json::Error),
+    #[error(transparent)]
+    SymbolicEvaluationError(#[from] SymbolicEvaluationError),
+    #[error(transparent)]
+    EntityAttrEvaluationError(#[from] cedar_policy_core::ast::EntityAttrEvaluationError),
 }
 
 impl From<cedar_policy_core::parser::err::ParseErrors> for AuthorizerError {

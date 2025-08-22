@@ -8,7 +8,7 @@ permit(
     resource.resourceCombined == "pods" &&
     !(resource has request) &&
     // Actual policy
-    resource has stored &&
+    resource has stored.metadata.labels &&
     (if resource.stored.metadata.labels.hasTag("env") then
         resource.stored.metadata.labels.getTag("env") != "prod"
      else true) &&
@@ -26,7 +26,7 @@ permit(
     resource.resourceCombined == "pods" &&
     !(resource has request) &&
     // Actual policy
-    resource has stored &&
+    resource has stored.metadata.labels &&
     resource.stored.metadata.labels.hasTag("env") && 
     resource.stored.metadata.labels.getTag("env") == "test"
 };

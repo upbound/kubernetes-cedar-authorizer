@@ -19,6 +19,8 @@ pub enum SchemaError {
     PolicyIsNotStatic(ast::PolicyID),
     #[error(transparent)]
     EarlyEvaluationError(#[from] EarlyEvaluationError),
+    #[error(transparent)]
+    SolverFactoryError(#[from] crate::cedar_authorizer::symcc::SolverFactoryError),
 }
 
 #[derive(Debug, thiserror::Error)]

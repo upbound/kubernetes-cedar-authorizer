@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
-use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
+use crate::k8s_authorizer::{
+    CombinedResource, NonResourceAttributes, RequestType, StarWildcardStringSelector,
+};
 
 use super::err::ParseError;
 use crate::cedar_authorizer::kube_invariants;
@@ -12,16 +14,22 @@ use super::err::AuthorizerError;
 use super::selectors::Selector;
 use cedar_policy_core::ast::{self, EntityUID};
 
-pub trait KubernetesAuthorizer {
+pub trait KubernetesAuthorizer: Sync {
     /// Determines whether the request is authorized.
     /// Returns a Response object with the decision, reason, and errors, or an unexpected error.
-    fn is_authorized(&self, attrs: Attributes) -> Result<Response, AuthorizerError>;
+    fn is_authorized(
+        &self,
+        attrs: Attributes,
+    ) -> impl std::future::Future<Output = Result<Response, AuthorizerError>> + Send;
 
     /// Convenience method that converts the Result<Response, AuthorizerError> into a Response.
     /// If the Result is an unexpected error, NoOpinion is returned, and the errors are added to the Response.
     /// If the Result is ok, the Response is returned as is.
-    fn is_authorized_response(&self, attrs: Attributes) -> Response {
-        self.is_authorized(attrs).into()
+    fn is_authorized_response(
+        &self,
+        attrs: Attributes,
+    ) -> impl std::future::Future<Output = Response> + Send {
+        async move { self.is_authorized(attrs).await.into() }
     }
 }
 
@@ -155,6 +163,25 @@ impl Attributes {
     pub fn from_subject_access_review(value: &SubjectAccessReview) -> Result<Self, ParseError> {
         Self::try_from(value.clone())
     }
+    pub fn supports_conditional_authorization(&self) -> Option<(String, String, String)> {
+        match &self.request_type {
+            RequestType::Resource(ResourceAttributes {
+                api_group,
+                api_version,
+                resource,
+                ..
+            }) => match (api_group, api_version, resource) {
+                (
+                    StarWildcardStringSelector::Exact(api_group),
+                    StarWildcardStringSelector::Exact(api_version),
+                    CombinedResource::ResourceOnly { .. }
+                    | CombinedResource::ResourceSubresource { .. },
+                ) => Some((api_group.clone(), api_version.clone(), resource.to_string())),
+                _ => None,
+            },
+            RequestType::NonResource(_) => None,
+        }
+    }
 }
 
 impl TryFrom<SubjectAccessReview> for Attributes {
@@ -188,13 +215,8 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                             },
                             StarWildcardStringSelector::Any => StarWildcardStringSelector::Any,
                         },
-                        field_selector: match (
-                            verb.supports_selectors(),
-                            resource_attrs.field_selector,
-                        ) {
-                            (false, _) => None, // Don't parse if the verb does not support it. TODO: error or warning?
-                            (true, None) => None,
-                            (true, Some(selector_params)) => {
+                        field_selector: match resource_attrs.field_selector {
+                            Some(selector_params) => {
                                 match (selector_params.raw_selector, selector_params.requirements) {
                                     (Some(_), _) => {
                                         return Err(ParseError::InvalidFieldSelectorRequirement(
@@ -209,14 +231,10 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                                     (None, None) => None,
                                 }
                             }
+                            None => None,
                         },
-                        label_selector: match (
-                            verb.supports_selectors(),
-                            resource_attrs.label_selector,
-                        ) {
-                            (false, _) => None, // Don't parse if the verb does not support it. TODO: error or warning?
-                            (true, None) => None,
-                            (true, Some(selector_params)) => {
+                        label_selector: match resource_attrs.label_selector {
+                            Some(selector_params) => {
                                 match (selector_params.raw_selector, selector_params.requirements) {
                                     (Some(_), _) => {
                                         return Err(ParseError::InvalidLabelSelectorRequirement(
@@ -231,6 +249,7 @@ impl TryFrom<SubjectAccessReview> for Attributes {
                                     (None, None) => None,
                                 }
                             }
+                            None => None,
                         },
                     }),
                 })

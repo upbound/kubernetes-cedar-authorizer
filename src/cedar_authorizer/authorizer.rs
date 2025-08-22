@@ -1,34 +1,35 @@
+use cedar_policy_core::entities::Schema;
 use cedar_policy_core::validator::json_schema::{CommonTypeId, NamespaceDefinition};
 use cedar_policy_core::validator::{json_schema, RawName};
-use k8s_openapi::api::core::v1 as corev1;
+use cedar_policy_symcc::solver::Solver;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 use kube::core::GroupVersion;
-use kube::runtime::reflector;
-use kube::{self};
-use smol_str::SmolStr;
+use smol_str::{SmolStr, ToSmolStr};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use cedar_policy_core::tpe::entities::PartialEntities;
+use cedar_policy_core::tpe::entities::{PartialEntities, PartialEntity};
 use cedar_policy_core::tpe::request::PartialRequest;
 
-use cedar_policy_core::ast::{Annotation, AnyId, Name, UnreservedId};
+use cedar_policy_core::ast::{self, Annotation, AnyId, Name, UnreservedId};
 
-use crate::cedar_authorizer::kube_invariants::DetailedDecision;
+use crate::cedar_authorizer::entitybuilder::PartialValue;
 use crate::cedar_authorizer::kube_invariants::{self};
+use crate::cedar_authorizer::kube_invariants::{ActionCapability, DetailedDecision};
+use crate::cedar_authorizer::symcc;
 use crate::k8s_authorizer::StarWildcardStringSelector;
 use crate::k8s_authorizer::{
-    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, ParseError,
-    Reason, ResourceAttributes, Response, Verb,
+    Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
+    ResourceAttributes, Response, Verb,
 };
 use crate::k8s_authorizer::{CombinedResource, RequestType};
 use crate::schema::core::{
-    ENTITY_NAMESPACE, ENTITY_OBJECTMETA, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
+    K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
     PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
 };
 
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder, RecordBuilderImpl};
 use super::kube_invariants::SchemaError;
-use super::kubestore::KubeStore;
 
 static API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse().unwrap());
 
@@ -53,18 +54,20 @@ static API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-pub struct CedarKubeAuthorizer<S: KubeStore<corev1::Namespace>> {
+pub struct CedarKubeAuthorizer<F: symcc::SolverFactory<C>, C: Solver> {
     policies: kube_invariants::PolicySet,
-    namespaces: S,
-    // k8s_ns: &'a NamespaceDefinition<RawName>,
+    symcc_evaluator: symcc::SymbolicEvaluator<F, C>,
 }
 
-impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
+impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
-    pub fn new(policies: kube_invariants::PolicySet, namespaces: S) -> Result<Self, SchemaError> {
+    pub fn new(
+        policies: kube_invariants::PolicySet,
+        symcc_factory: F,
+    ) -> Result<Self, SchemaError> {
         Ok(Self {
+            symcc_evaluator: symcc::SymbolicEvaluator::new(policies.schema(), symcc_factory)?,
             policies,
-            namespaces,
         })
     }
 
@@ -75,10 +78,18 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
         }
 
         let mut entity_builder: EntityBuilder = EntityBuilder::new()
-            .with_attr("username", Some(attrs.user.name.as_str()))
-            .with_string_set("groups", Some(attrs.user.groups.iter().map(|s| s.as_str())))
-            .with_attr("uid", attrs.user.uid.as_deref())
-            .with_string_to_stringset_map("extra", Some(&attrs.user.extra));
+            .with_attr("username", attrs.user.name.to_smolstr())
+            .with_attr(
+                "groups",
+                attrs
+                    .user
+                    .groups
+                    .iter()
+                    .map(|s| s.to_smolstr())
+                    .collect::<HashSet<_>>(),
+            )
+            .with_attr("uid", attrs.user.uid.as_ref())
+            .with_attr("extra", attrs.user.extra.clone());
 
         let mut principal_type = PRINCIPAL_USER.name.name();
 
@@ -91,8 +102,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                 ));
             }
 
-            entity_builder.add_attr("serviceAccountNamespace", Some(parts[0]));
-            entity_builder.add_attr("serviceAccountName", Some(parts[1]));
+            entity_builder.add_attr("serviceAccountNamespace", parts[0]);
+            entity_builder.add_attr("serviceAccountName", parts[1]);
 
             principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
         } else if let Some(nodename) = attrs.user.name.strip_prefix("system:node:") {
@@ -104,73 +115,58 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
             }
             principal_type = PRINCIPAL_NODE.name.name();
             // TODO: Add some validation here
-            entity_builder.add_attr("nodeName", Some(nodename));
+            entity_builder.add_attr("nodeName", nodename);
         }
 
         Ok(entity_builder.build(principal_type))
     }
 
-    fn namespace_entity(&self, ns_name: &str) -> Result<BuiltEntity, AuthorizerError> {
-        let stored_ns = self.namespaces.get(&reflector::ObjectRef::new(ns_name));
-        let stored_ns_metadata = stored_ns.as_ref().map(|ns| &ns.metadata);
-
-        Ok(EntityBuilder::new()
-            // Note: resource.namespace.name is populated (if non-wildcard), although the namespace
-            // does not exist in Kubernetes, and thus no metadata is available (left unknown).
-            .with_attr("name", Some(ns_name))
-            // TODO: Should this entity also have a deterministic UID; as
-            .with_metadata(match stored_ns_metadata {
-                Some(ns_metadata) => Some(ns_metadata),
-                None => None,
-            })
-            .build(ENTITY_NAMESPACE.name.name()))
-    }
-
     fn construct_resource(
         &self,
         attrs: &Attributes,
-    ) -> Result<(BuiltEntity, bool), AuthorizerError> {
+        action_capability: &ActionCapability,
+    ) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
         match &attrs.request_type {
             RequestType::NonResource(nonresource_attrs) => Ok((
                 EntityBuilder::new()
                     .with_attr(
                         "path",
-                        Some(EntityBuilder::unknown_string(
-                            match nonresource_attrs.path {
-                                StarWildcardStringSelector::Any => None,
-                                _ => Some(nonresource_attrs.path.to_string()),
-                            },
-                        )),
+                        match nonresource_attrs.path {
+                            StarWildcardStringSelector::Any => PartialValue::Unknown,
+                            _ => {
+                                PartialValue::Known(nonresource_attrs.path.to_string().to_smolstr())
+                            }
+                        },
                     )
                     .build(RESOURCE_NONRESOURCEURL.name.name()),
-                false,
+                None,
             )),
             RequestType::Resource(resource_attrs) => {
                 let mut resource_builder = EntityBuilder::new()
                     .with_attr(
                         "apiGroup",
-                        Some(EntityBuilder::unknown_string(
-                            match resource_attrs.api_group {
-                                StarWildcardStringSelector::Any => None,
-                                _ => Some(resource_attrs.api_group.to_string()),
-                            },
-                        )),
-                    )
-                    .with_attr(
-                        "name",
-                        Some(EntityBuilder::unknown_string(match resource_attrs.name {
-                            EmptyWildcardStringSelector::Any => None,
-                            _ => Some(resource_attrs.name.to_string()),
-                        })),
+                        match resource_attrs.api_group {
+                            StarWildcardStringSelector::Any => PartialValue::Unknown,
+                            _ => PartialValue::Known(
+                                resource_attrs.api_group.to_string().to_smolstr(),
+                            ),
+                        },
                     )
                     .with_attr(
                         "resourceCombined",
-                        Some(EntityBuilder::unknown_string(
-                            match resource_attrs.resource {
-                                CombinedResource::Any => None,
-                                _ => Some(resource_attrs.resource.to_string()),
-                            },
-                        )),
+                        match resource_attrs.resource {
+                            CombinedResource::Any => PartialValue::Unknown,
+                            _ => PartialValue::Known(
+                                resource_attrs.resource.to_string().to_smolstr(),
+                            ),
+                        },
+                    )
+                    .with_attr(
+                        "name",
+                        match resource_attrs.name {
+                            EmptyWildcardStringSelector::Any => PartialValue::Unknown,
+                            _ => PartialValue::Known(resource_attrs.name.to_string().to_smolstr()),
+                        },
                     );
 
                 match (&resource_attrs.api_group, &resource_attrs.resource) {
@@ -191,24 +187,22 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                             resource_type,
                         )) => {
                             let record = entity_to_record(resource_type)?;
-                            resource_builder.add_attr(
-                                "namespace",
-                                match &resource_attrs.namespace {
-                                    EmptyWildcardStringSelector::Any => {
-                                        match record.attributes.contains_key("namespace") {
-                                            // An unset namespace for a namespaced resource means "any".
-                                            true => Some(EntityBuilder::build_unknown(
-                                                ENTITY_NAMESPACE.name.name(),
-                                            )),
-                                            // An unset namespace for a cluster-scoped resource means "none".
-                                            false => None,
+
+                            // Only populate the namespace field if there is such an attribute in the schema.
+                            // The namespace is never set for a cluster-scoped resource
+                            // If the SAR specifies some exact namespace for a cluster-scoped resource,
+                            // the SAR value is ignored. TODO: Check if this is the case also for k8s RBAC.
+                            if record.attributes.contains_key("namespace") {
+                                resource_builder.add_attr(
+                                    "namespace",
+                                    match &resource_attrs.namespace {
+                                        EmptyWildcardStringSelector::Any => PartialValue::Unknown,
+                                        EmptyWildcardStringSelector::Exact(ns_name) => {
+                                            PartialValue::Known(ns_name.to_smolstr())
                                         }
-                                    }
-                                    EmptyWildcardStringSelector::Exact(ns_name) => {
-                                        Some(self.namespace_entity(ns_name.as_str())?)
-                                    }
-                                },
-                            );
+                                    },
+                                );
+                            }
 
                             // TODO: Enforce all these invariants early on, instead of here (late).
                             // In that case, we can guard against ever starting to consider a faulty schema and
@@ -221,75 +215,94 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                                         GroupVersion::gv(api_group, api_version)
                                             .api_version()
                                             .into();
-                                    resource_builder.add_attr(
-                                        "request",
-                                        match record.attributes.get("request") {
-                                            Some(_) => match attrs.verb {
-                                                // In authorization, keep resource.request unknown for the verbs which
-                                                // carry request data.
-                                                Verb::Create
-                                                | Verb::Update
-                                                | Verb::Patch
-                                                | Verb::Connect => {
-                                                    let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
-                                                    .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
-                                                    let versioned_record = type_to_record(&versioned_record.ty)?;
-                                                    let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
 
-                                                    Some(RecordBuilderImpl::new()
+                                    // TODO: For now, we only populate the namespace metadata if conditional authorization is supported, in other words,
+                                    // only when VAP is enabled. If decisions were computed directly based on namespace metadata (e.g. unconditional allow or deny),
+                                    // then authorization would become state-dependent, and return varying results for the same SAR, depending on mutable etcd state.
+                                    // In practice, the Node authorizer is state-dependent, but that is a specialized use-case, and we need to be careful to expose such things
+                                    // to the policy author in a way that could be confusing. The general idea would be that authorization is stateless, and must return cacheable
+                                    // responses, but then the enforcement point (e.g. the API server) is able to allow/deny individual requests based on data in etcd.
+                                    // In the future, one could consider adding the ability to operate on namespace metadata for list, watch, deletecollection verbs as well,
+                                    // those cannot be supported before the API server is able to enforce conditions for such requests.
+                                    // It might also be unintuitive that the precondition on namespace metadata existing, is that the API version is an exact match.
+                                    // Given these specific circumstances when this field is available, it is hard to say whether it is more confusing than helpful.
+                                    if let (true, true) = (
+                                        record.attributes.contains_key("namespaceMetadata"),
+                                        action_capability.supports_conditional_decision(),
+                                    ) {
+                                        resource_builder
+                                            .add_attr::<&str, PartialValue<&metav1::ObjectMeta>>(
+                                                "namespaceMetadata",
+                                                PartialValue::Unknown,
+                                            );
+                                    }
+
+                                    match (
+                                        record.attributes.contains_key("request"),
+                                        action_capability.has_request_object(),
+                                    ) {
+                                        (true, true) => {
+                                            let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
+                                            .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
+                                            let versioned_record =
+                                                type_to_record(&versioned_record.ty)?;
+                                            let specific_version_attr = versioned_record
+                                                .attributes
+                                                .get(api_version.as_str());
+                                            resource_builder.add_attr(
+                                                "request",
+                                                    RecordBuilderImpl::new()
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
                                                     .with_attr("kind", Some(kind.clone()))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
-                                                    .with_attr("metadata", specific_version_attr.map(|_| EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())))
-                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref())))))
-                                                }
-                                                // For verbs that do not carry request data, make "resource has request" return false.
-                                                _ => None,
-                                            },
-                                            // If the type does not have a request, ok, don't add anything.
-                                            None => None,
-                                        },
-                                    );
+                                                    .with_attr::<&str, PartialValue<&metav1::ObjectMeta>>("metadata", match specific_version_attr {
+                                                        Some(_) => PartialValue::Unknown,
+                                                        None => PartialValue::Unset,
+                                                    })
+                                                    // TODO: Use partialvalue here and unknown/unset instead of this Option<Unknown> style
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
+                                                );
+                                        }
+                                        // For verbs that do not carry request data, make "resource has request" return false.
+                                        (true, false) => (),
+                                        // If the type does not have a request, ok, don't add anything.
+                                        (false, _) => (),
+                                    };
 
-                                    resource_builder.add_attr(
-                                        "stored",
-                                        match record.attributes.get("stored") {
-                                            Some(_) => match attrs.verb {
-                                                // In authorization, keep resource.request unknown for the verbs which
-                                                // carry request data.
-                                                // TODO: Do we get any stored data for connect verbs?
-                                                // TODO: Should we allow arbitrary verbs to operate conditionally?
-                                                // TODO: Actually make this known, and populate the apiVersion & kind fields
-                                                // Keep metadata unknown, but also only populate one of the versioned fields.
-                                                Verb::Get
-                                                | Verb::List
-                                                | Verb::Watch
-                                                | Verb::Update
-                                                | Verb::Patch
-                                                | Verb::Delete
-                                                | Verb::DeleteCollection => {
-                                                    let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
+                                    match (
+                                        record.attributes.contains_key("stored"),
+                                        action_capability.has_stored_object(),
+                                    ) {
+                                        (true, true) => {
+                                            let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                                     .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
-                                                    let versioned_record = type_to_record(&versioned_record.ty)?;
-                                                    let specific_version_attr = versioned_record.attributes.get(api_version.as_str());
+                                            let versioned_record =
+                                                type_to_record(&versioned_record.ty)?;
+                                            let specific_version_attr = versioned_record
+                                                .attributes
+                                                .get(api_version.as_str());
 
-                                                    Some(RecordBuilderImpl::new()
+                                            resource_builder.add_attr(
+                                                "stored",
+                                                RecordBuilderImpl::new()
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
                                                     .with_attr("kind", Some(kind.clone()))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
-                                                    .with_attr("metadata", specific_version_attr.map(|_| EntityBuilder::build_unknown(ENTITY_OBJECTMETA.name.name())))
-                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref())))))
-                                                }
-                                                // For verbs that do not carry request data, make "resource has request" return false.
-                                                _ => None,
-                                            },
-                                            // If the type does not have a stored value, ok, don't add anything.
-                                            None => None,
-                                        },
-                                    );
+                                                    .with_attr::<&str, PartialValue<&metav1::ObjectMeta>>("metadata", match specific_version_attr {
+                                                        Some(_) => PartialValue::Unknown,
+                                                        None => PartialValue::Unset,
+                                                    })
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
+                                                );
+                                        }
+                                        // For verbs that do not have stored data, make "resource has stored" return false.
+                                        (true, false) => (),
+                                        // If the type does not have a stored object, ok, don't add anything.
+                                        (false, _) => (),
+                                    }
                                 }
-                                // If the apiVersion is an any match, resource.stored and resource.request are nil, but unlike
-                                // the untyped case (k8s::Resource), the specific resource entity type is used (e.g. core::pods)
+                                // If the apiVersion is an any match, resource.stored, resource.request, and resource.namespaceMetadata are nil, but unlike
+                                // the untyped case (k8s::Resource), the specific resource entity type is used (e.g. core::pods).
                                 StarWildcardStringSelector::Any => (),
                             }
 
@@ -298,7 +311,7 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
                                     Name::unqualified_name(typed_resource_entity_id)
                                         .qualify_with_name(resource_type_namespace_name.as_ref()),
                                 ),
-                                true,
+                                Some(record.attributes.contains_key("namespace")),
                             ))
                         }
                         // Untyped k8s::Resource case, due to to the resource requested not being in the schema,
@@ -318,28 +331,27 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
         &self,
         resource_builder: EntityBuilder,
         resource_attrs: &ResourceAttributes,
-    ) -> Result<(BuiltEntity, bool), AuthorizerError> {
+    ) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
         Ok((
             resource_builder
                 .with_attr(
                     "namespace",
                     match &resource_attrs.namespace {
-                        // Here we must assume that the namespace is "any",
+                        // Here we cannot distinguish between namespace being "any" or "unset". We assume that the namespace is "any",
                         // as we're arbitrarily selecting across a (possibly infinite) set of k8s resource types.
                         // However, in theory all matched resources could be cluster-scoped (imagine apiGroup="foo" and resource="*"),
                         // where all resources in apiGroup="foo" are cluster-scoped. If so, it would be better to make "resource has namespace"
                         // queries return "false", but this we cannot know, we lose a little bit of precision here.
                         // TODO: Create a Cedar issue to discuss whether "foo has bar" should be able to be unknown, which is what we want here.
-                        EmptyWildcardStringSelector::Any => {
-                            Some(EntityBuilder::build_unknown(ENTITY_NAMESPACE.name.name()))
-                        }
+                        EmptyWildcardStringSelector::Any => PartialValue::Unknown,
                         EmptyWildcardStringSelector::Exact(ns_name) => {
-                            Some(self.namespace_entity(ns_name.as_str())?)
+                            PartialValue::Known(ns_name.to_smolstr())
                         }
                     },
                 )
+                // None here means that we don't know whether the resource is namespace-scoped or cluster-scoped.
                 .build(RESOURCE_RESOURCE.name.name()),
-            false,
+            None,
         ))
     }
 
@@ -375,35 +387,50 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
     }
 
     // INVARIANT: verb is validated to exist in the schema already.
-    fn is_authorized_for_action(
+    async fn is_authorized_for_action(
         &self,
         attrs: &Attributes,
         action: &str,
+        cedar_ns_name: &Option<Name>,
     ) -> Result<DetailedDecision, AuthorizerError> {
-        // Check both typed and untyped actions, if applicable.
-        // There is a typed action only if
-        // a) the action is get, list, watch, create, update, patch, delete, deletecollection, and
-        // b) the resource refers to a resource type in the schema.
-
+        let action_capability = self
+            .policies
+            .schema_ref()
+            .get_action_capabilities(cedar_ns_name, action);
         // TODO: Unit-test the construct_principal/resource functions.
         let principal_entity = self.construct_principal(attrs)?;
-        // TODO: Derive typed_resource from the uid of the built entity.
-        let (resource_entity, typed_resource) = self.construct_resource(attrs)?;
+        let (resource_entity, namespace_scoped) =
+            self.construct_resource(attrs, &action_capability)?;
 
-        let action_entity = if resource_entity
-            .uid()
-            .to_string()
-            .starts_with("k8s::nonresource::")
-        {
-            format!(r#"k8s::nonresource::Action::"{action}""#).parse()?
-        } else {
-            format!(r#"k8s::Action::"{action}""#).parse()?
+        let principal_entity_uid = principal_entity.uid().clone();
+        let resource_entity_uid = resource_entity.uid().clone();
+        //let cedar_ns_internalname = cedar_ns_name.as_ref().map(|n| n.as_ref());
+        let action_entity_uid: ast::EntityUID = match &attrs.request_type {
+            RequestType::Resource(_) => format!(r#"k8s::Action::"{action}""#).parse()?,
+            RequestType::NonResource(_) => {
+                format!(r#"k8s::nonresource::Action::"{action}""#).parse()?
+            }
+        };
+        let code_schema =
+            cedar_policy_core::validator::CoreSchema::new(self.policies.schema_ref().as_ref());
+        let action_entity = PartialEntity {
+            uid: action_entity_uid.clone(),
+            attrs: None,
+            ancestors: Some(
+                code_schema
+                    .action(&action_entity_uid)
+                    .expect("INVARIANT: action existence in the schema is checked in is_authorized")
+                    .ancestors()
+                    .cloned()
+                    .collect(),
+            ),
+            tags: None,
         };
 
         let req = PartialRequest::new(
-            principal_entity.uid().clone().into(),
-            action_entity,
-            resource_entity.uid().clone().into(),
+            principal_entity_uid.clone().into(),
+            action_entity_uid.clone(),
+            resource_entity_uid.clone().into(),
             None,
             self.policies.schema().as_ref().as_ref(),
         )?;
@@ -416,7 +443,8 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
         let entities = PartialEntities::from_entities(
             principal_entities
                 .into_iter()
-                .chain(resource_entities.into_iter()),
+                .chain(resource_entities.into_iter())
+                .chain(std::iter::once((action_entity_uid.clone(), action_entity))),
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -426,19 +454,62 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
             DetailedDecision::Allow(permitted_policy_ids) => {
                 DetailedDecision::Allow(permitted_policy_ids)
             }
-            // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
-            // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
-            // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
             DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid) => {
-                if typed_resource {
-                    DetailedDecision::Conditional(
-                        condition,
-                        unknown_jsonpaths_to_uid
-                            .into_iter()
-                            .chain(principal_jsonpaths)
-                            .chain(resource_jsonpaths)
-                            .collect(),
-                    )
+                //println!("conditional decision: {condition}");
+
+                // Union all the unknown jsonpaths.
+                let unknown_jsonpaths_to_uid = unknown_jsonpaths_to_uid
+                    .into_iter()
+                    .chain(principal_jsonpaths)
+                    .chain(resource_jsonpaths)
+                    .collect();
+
+                // For conditional authorization to be supported, apiGroup, apiVersion, and resource must be exact matches.
+                // TODO: Should label selector authorization be allowed, even though we don't know the resource type?
+                if let Some((_, api_version, _)) = attrs.supports_conditional_authorization() {
+                    if action_capability.supports_conditional_decision() {
+                        DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
+                    } else if action_capability.supports_selectors() {
+                        let reqenv = cedar_policy::RequestEnv::new(
+                            principal_entity_uid.entity_type().clone().into(),
+                            action_entity_uid.into(),
+                            resource_entity_uid.entity_type().clone().into(),
+                        );
+
+                        match self
+                            .symcc_evaluator
+                            .selector_conditions_are_authorized(
+                                attrs,
+                                &reqenv,
+                                condition,
+                                unknown_jsonpaths_to_uid,
+                                &api_version,
+                                namespace_scoped.unwrap_or(true),
+                            )
+                            .await?
+                        {
+                            // TODO: Fill in these, although we don't know exactly which allow policy fired.
+                            true => {
+                                DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
+                                    "conditional_authorization",
+                                )]))
+                            }
+                            // TODO: Fill in these, although we don't know exactly which deny policy fired; or if it was due to no matching allow rules.
+                            false => {
+                                DetailedDecision::Deny(Vec::from([ast::PolicyID::from_string(
+                                    "conditional_authorization",
+                                )]))
+                            }
+                        }
+                    } else {
+                        // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
+                        // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
+                        // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
+                        // TODO: If the resource is an untyped resource request, it might still need symcc,
+                        // because of the 'resource.resourceCombined like "*/scale"' expressions.
+                        // However, that could also be solved without symcc, by manual traversal for the specific use-case.
+                        DetailedDecision::NoOpinion
+                    }
                 } else {
                     DetailedDecision::NoOpinion
                 }
@@ -451,36 +522,58 @@ impl<S: KubeStore<corev1::Namespace>> CedarKubeAuthorizer<S> {
     }
 }
 
-impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer for CedarKubeAuthorizer<S> {
-    fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
-        // Check that verb is supported in schema
-        // If * => check with every action in schema in subroutine
-
-        let schema = self.policies.schema();
-        let k8s_ns = schema
-            .get_namespace(&K8S_NS)
-            .ok_or(AuthorizerError::NoKubernetesNamespace)?;
-
-        let verb_str = attrs.verb.to_string();
-        if !k8s_ns.actions.contains_key(verb_str.as_str()) {
-            return Err(AuthorizerError::UnsupportedVerb(verb_str));
-        }
-
-        // Populate the resource attributes from the field selectors, if present.
-        match &mut attrs.request_type {
+impl<F: symcc::SolverFactory<C> + Send + Sync, C: Solver + Send + Sync> KubernetesAuthorizer
+    for CedarKubeAuthorizer<F, C>
+{
+    async fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
+        let action_str = attrs.verb.to_string();
+        let cedar_ns_name = match &mut attrs.request_type {
             RequestType::Resource(resource_attrs) => {
-                default_from_selectors(resource_attrs)?;
+                // Lookup the action capabilities for the resource request. An error is returned if the action is not supported.
+                let action_capability = self
+                    .policies
+                    .schema_ref()
+                    .get_action_capabilities(&K8S_NS, &action_str);
+                if action_capability.supports_selectors() {
+                    // Populate the resource attributes from the field selectors, if present.
+                    resource_attrs.default_from_selectors()?;
+                } else {
+                    resource_attrs.field_selector = None;
+                    resource_attrs.label_selector = None;
+                }
+                &K8S_NS
             }
-            RequestType::NonResource(_) => (),
+            RequestType::NonResource(_) => {
+                // Lookup the action capabilities for the non-resource request. An error is returned if the action is not supported.
+                &K8S_NONRESOURCE_NS
+            }
+        };
+
+        let cedar_ns = self
+            .policies
+            .schema_ref()
+            .get_namespace(cedar_ns_name)
+            .ok_or_else(|| {
+                AuthorizerError::UnexpectedSchemaShape(format!(
+                    "schema should have {cedar_ns_name:?} namespace registered"
+                ))
+            })?;
+
+        if !cedar_ns.actions.contains_key(action_str.as_str()) {
+            return Err(AuthorizerError::UnsupportedVerb(action_str));
         }
 
         match attrs.verb {
+            // If the action is Any, verify that all actions are unconditionally allowed.
             Verb::Any => {
                 let errors = Vec::new();
                 let mut allowed_ids = HashSet::new();
                 // TODO: Check the * action first, then others.
-                for (action, _) in k8s_ns.actions.iter() {
-                    let resp = self.is_authorized_for_action(&attrs, action.as_str())?;
+                // Deliberately shadow the action_str and action_schemadef variables so they aren't accidentally used.
+                for (action_str, _) in cedar_ns.actions.iter() {
+                    let resp = self
+                        .is_authorized_for_action(&attrs, action_str.as_str(), cedar_ns_name)
+                        .await?;
                     // TODO: Propagate errors?
 
                     match resp {
@@ -489,20 +582,23 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer for CedarKubeAuthoriz
                         }
                         DetailedDecision::Conditional(conditions, _) => {
                             return Ok(Response::no_opinion().with_errors(errors).with_reason(
-                                Reason::not_unconditionally_allowed(action, &conditions),
+                                Reason::not_unconditionally_allowed(action_str, &conditions),
                             ))
                         }
                         DetailedDecision::Deny(forbidden_policy_ids) => {
                             return Ok(Response::no_opinion().with_errors(errors).with_reason(
-                                Reason::denied_by_policies(action, &forbidden_policy_ids),
+                                Reason::denied_by_policies(action_str, &forbidden_policy_ids),
                             ))
                         }
+                        // TODO: Add as reason that a specific action is not unconditionally allowed.
                         DetailedDecision::NoOpinion => {
-                            return Ok(Response::no_opinion().with_errors(errors))
+                            return Ok(Response::no_opinion()
+                                .with_errors(errors)
+                                .with_reason(Reason::no_allow_policy_match(action_str)))
                         }
                     }
                 }
-
+                // TODO: Add all policies that allowed the action as reason?
                 Ok(Response::allow().with_errors(errors))
             }
             // Semantics:
@@ -520,8 +616,10 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer for CedarKubeAuthoriz
             // - Otherwise (only false denies and allows, or none), no opinion.
             // TODO: Maybe we want still to fold here too?
             _ => {
-                let action_str = attrs.verb.to_string();
-                match self.is_authorized_for_action(&attrs, &action_str)? {
+                match self
+                    .is_authorized_for_action(&attrs, &action_str, cedar_ns_name)
+                    .await?
+                {
                     // TODO: Propagate errors
                     DetailedDecision::Allow(permitted_policy_ids) => Ok(Response::allow()
                         .with_reason(Reason::allowed_by_policies(
@@ -547,80 +645,6 @@ impl<S: KubeStore<corev1::Namespace>> KubernetesAuthorizer for CedarKubeAuthoriz
         }
     }
 }
-
-// TODO: Should we validate to only allow only field selectors for specific verbs?
-// TODO: The more generic solution here is to allow multiple values for a field selector,
-// get a residual, and use the SAT/SMT/symbolic compiler method to make sure that all possible values
-// are authorized.
-fn default_from_selectors(built_resource_attrs: &mut ResourceAttributes) -> Result<(), ParseError> {
-    if let Some(field_selectors) = &built_resource_attrs.field_selector {
-        for field_selector in field_selectors {
-            match field_selector.key.as_str() {
-                // Populate the name field from the field selector, if present, like Kubernetes does.
-                "metadata.name" => {
-                    match (&built_resource_attrs.name, field_selector.exact_match()) {
-                        // Fold the field selector value into the spec requirement, just like Kubernetes RequestInfo code does.
-                        (EmptyWildcardStringSelector::Any, Some(fieldselector_name)) => {
-                            built_resource_attrs.name =
-                                EmptyWildcardStringSelector::Exact(fieldselector_name);
-                        }
-                        // No requirements, nothing to do.
-                        (EmptyWildcardStringSelector::Any, None) => (),
-                        // If name is specified both in the SAR spec and in the field selector, they must match.
-                        (
-                            EmptyWildcardStringSelector::Exact(spec_name),
-                            Some(fieldselector_name),
-                        ) => {
-                            if spec_name.as_str() != fieldselector_name {
-                                return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.name is specified both on the SubjectAccessReview spec ({spec_name}) and in the field selector ({fieldselector_name}), they must match")));
-                            }
-                        }
-                        // This is the usual case, name is specified in the SAR spec, but no field selector is present.
-                        (EmptyWildcardStringSelector::Exact(_), None) => (),
-                    }
-                }
-                // Populate the namespace field from the field selector in the similar manner, however, UNLIKE Kubernetes.
-                // We here choose to be consistent with the way we populate the name field, and not Kubernetes.
-                "metadata.namespace" => {
-                    match (
-                        &built_resource_attrs.namespace,
-                        field_selector.exact_match(),
-                    ) {
-                        // Fold the field selector value into the spec requirement.
-                        (EmptyWildcardStringSelector::Any, Some(fieldselector_namespace)) => {
-                            built_resource_attrs.namespace =
-                                EmptyWildcardStringSelector::Exact(fieldselector_namespace);
-                        }
-                        // No requirements, nothing to do.
-                        (EmptyWildcardStringSelector::Any, None) => (),
-                        // If namespace is specified both in the SAR spec and in the field selector, they must match.
-                        (
-                            EmptyWildcardStringSelector::Exact(spec_namespace),
-                            Some(fieldselector_namespace),
-                        ) => {
-                            if spec_namespace.as_str() != fieldselector_namespace {
-                                return Err(ParseError::InvalidFieldSelectorRequirement(format!("if metadata.namespace is specified both on the SubjectAccessReview spec ({spec_namespace}) and in the field selector ({fieldselector_namespace}), they must match")));
-                            }
-                        }
-                        // This is the usual case, namespace is specified in the SAR spec, but no field selector is present.
-                        (EmptyWildcardStringSelector::Exact(_), None) => (),
-                    }
-                }
-                _ => (),
-            }
-        }
-    }
-    Ok(())
-}
-
-// TODO: This should be upstreamed to cedar-policy-core.
-/*fn namespace_of_name(name: &Name) -> Option<Name> {
-    let internal_name = name.as_ref();
-    match internal_name.namespace().as_str() {
-        "" => None,
-        namespace => Some(namespace.parse().unwrap()),
-    }
-}*/
 
 // TODO: Translate to connect verbs
 
@@ -653,34 +677,10 @@ fn type_to_record(
     }
 }
 
-/*fn entity_ref_of_type(
-    main_ty: &json_schema::Type<RawName>,
-    relevant_namespace: Option<&Name>,
-) -> Result<InternalName, AuthorizerError> {
-    let raw_name = match main_ty {
-        json_schema::Type::Type { ty, .. } => match ty {
-            json_schema::TypeVariant::Entity { name } => name.clone(),
-            json_schema::TypeVariant::EntityOrCommon { type_name } => type_name.clone(),
-            _ => {
-                return Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                    "Expected entity reference, got {main_ty}"
-                )))
-            }
-        },
-        _ => {
-            return Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                "Expected entity reference, got {main_ty}"
-            )))
-        }
-    };
-    Ok(raw_name.qualify_with_name(relevant_namespace))
-}*/
-
 mod test {
 
-    #[test]
-    fn test_is_authorized() {
-        use super::super::kubestore::TestKubeStore;
+    #[tokio::test]
+    async fn test_is_authorized() {
         use crate::cedar_authorizer::kube_invariants;
         use crate::k8s_authorizer::test_utils::AttributesBuilder;
         use crate::k8s_authorizer::Selector;
@@ -691,10 +691,9 @@ mod test {
         use cedar_policy::PolicySet;
         use cedar_policy_core::extensions::Extensions;
         use cedar_policy_core::validator::json_schema::Fragment;
-        use k8s_openapi::api::core::v1 as corev1;
-        use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 
-        use std::collections::{BTreeMap, HashMap};
+        use crate::cedar_authorizer::symcc::LocalSolverFactory;
+        use std::collections::HashMap;
         use std::str::FromStr;
         use std::sync::Arc;
 
@@ -705,39 +704,12 @@ mod test {
         )
         .unwrap();
 
-        let namespace_store = TestKubeStore::new(vec![
-            corev1::Namespace {
-                metadata: metav1::ObjectMeta {
-                    name: Some("foo".to_string()),
-                    uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
-                    labels: Some(BTreeMap::from([(
-                        "serviceaccounts-allowed".to_string(),
-                        "true".to_string(),
-                    )])),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            corev1::Namespace {
-                metadata: metav1::ObjectMeta {
-                    name: Some("bar".to_string()),
-                    uid: Some("5a16a27e-f43b-4a07-a0d2-bf111f3d39ef".to_string()),
-                    labels: Some(BTreeMap::from([(
-                        "serviceaccounts-allowed".to_string(),
-                        "false".to_string(),
-                    )])),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        ]);
-
         let schema = super::kube_invariants::Schema::new(schema).unwrap();
         let policies =
             super::kube_invariants::PolicySet::new(policies.as_ref(), Arc::new(schema.clone()))
                 .unwrap();
 
-        let authorizer = super::CedarKubeAuthorizer::new(policies, namespace_store).unwrap();
+        let authorizer = super::CedarKubeAuthorizer::new(policies, LocalSolverFactory).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![
@@ -765,60 +737,43 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::no_opinion()),
-            ("serviceaccount can get pods in its own namespace",
-            AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Get,
-                    StarWildcardStringSelector::Exact("".to_string()),
-                    StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("foo".to_string()),
-                    EmptyWildcardStringSelector::Any)
-                .build(), Response::allow()),
-            ("serviceaccount can get pods in its own namespace, but through a field selector",
-            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:bar", Verb::Get,
-                    StarWildcardStringSelector::Exact("".to_string()),
-                    StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Any,
-                    EmptyWildcardStringSelector::Any,
-                    None,
-                    Some(vec![Selector::in_values("metadata.namespace", false, vec!["foo".to_string()])])
-                )
-                .build(), Response::allow()),
-            ("serviceaccount can get pods in its own namespace, but not in the supersecret namespace",
-            AttributesBuilder::resource("system:serviceaccount:supersecret:bar", Verb::Get,
-                    StarWildcardStringSelector::Exact("".to_string()),
-                    StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("supersecret".to_string()),
-                    EmptyWildcardStringSelector::Any)
-                .build(), Response::no_opinion()),
-            ("serviceaccount can get pods in a namespace which does not have the label",
-            AttributesBuilder::resource("system:serviceaccount:bar:bar", Verb::Get,
-                    StarWildcardStringSelector::Exact("".to_string()),
-                    StarWildcardStringSelector::Any,
-                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("bar".to_string()),
-                    EmptyWildcardStringSelector::Any)
-                .build(), Response::no_opinion()),
-            ("serviceaccount can conditionally get pods in a namespace which is not in the storage",
-            AttributesBuilder::resource("system:serviceaccount:baz:baz", Verb::Get,
+            ("serviceaccount can create pods in its own namespace, if the namespace has the label",
+            AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Create,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Exact("v1".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("baz".to_string()),
+                    EmptyWildcardStringSelector::Exact("foo".to_string()),
                     EmptyWildcardStringSelector::Any)
                 .build(), Response::conditional(kube_invariants::PolicySet::from_str(r#"permit(
     principal,
     action,
     resource
 ) when {
-(((meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5"["labels"]).hasTag("serviceaccounts-allowed")) && (((meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5"["labels"]).getTag("serviceaccounts-allowed")) == "true"))
+(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130" has "labels") &&
+(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130"["labels"]).hasTag("serviceaccounts-allowed") &&
+(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130"["labels"]).getTag("serviceaccounts-allowed") == "true"
 };"#, Arc::new(schema.clone())).unwrap(), HashMap::from([
-    ("resource.name".to_string(), r#"meta::UnknownString::"222fa568-eb07-411c-a6ff-b6eab75392dc""#.parse().unwrap()),
-    ("resource.namespace.metadata".to_string(), r#"meta::V1ObjectMeta::"0610f71c-7aab-4153-a235-afe4280a59f5""#.parse().unwrap()),
-    ("resource.stored.v1".to_string(), r#"core::V1Pod::"03600274-f607-4061-8080-fb1f7adc63a4""#.parse().unwrap()),
-    ("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"9c869675-8159-4f4d-b8c0-2173efe8142b""#.parse().unwrap()),
+    ("resource.name".to_string(), r#"meta::UnknownString::"899b04c3-0d65-4375-95d9-b643da26c747""#.parse().unwrap()),
+    ("resource.namespaceMetadata".to_string(), r#"meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130""#.parse().unwrap()),
+    ("resource.request.v1".to_string(), r#"core::V1Pod::"20fa9537-3d09-4628-9841-cdc26099bf64""#.parse().unwrap()),
+    ("resource.request.metadata".to_string(), r#"meta::V1ObjectMeta::"f9144f25-4359-4efe-80a2-3b74ed5bc57c""#.parse().unwrap()),
 ]))),
+            ("serviceaccount cannot create pods in another namespace",
+            AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Create,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Exact("notmatchingfoo".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
+            ("serviceaccount cannot create pods in the supersecret namespace",
+            AttributesBuilder::resource("system:serviceaccount:supersecret:bar", Verb::Create,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Exact("supersecret".to_string()),
+                    EmptyWildcardStringSelector::Any)
+                .build(), Response::no_opinion()),
             ("anonymous user can get openapi v2",
             AttributesBuilder::nonresource("system:anonymous", Verb::Get,
                 StarWildcardStringSelector::Exact("/openapi/v2".to_string()))
@@ -851,23 +806,42 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     EmptyWildcardStringSelector::Exact("node-2".to_string()))
                 .build(), Response::no_opinion()),
-            ("a node can get pods in the foo namespace",
-            AttributesBuilder::resource("system:node:node-1", Verb::Get,
+            ("node-1 can watch its own pods cluster-wide, except in the supersecret namespace",
+            AttributesBuilder::resource_and_selectors("system:node:node-1", Verb::Watch,
                     StarWildcardStringSelector::Exact("".to_string()),
                     StarWildcardStringSelector::Exact("v1".to_string()),
                     CombinedResource::ResourceOnly { resource: "pods".to_string() },
-                    EmptyWildcardStringSelector::Exact("foo".to_string()),
-                    EmptyWildcardStringSelector::Exact("pod-abc".to_string()))
-                .build(), Response::conditional(kube_invariants::PolicySet::from_str(r#"permit(
-  principal,
-  action,
-  resource
-) when {
-  ((core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8" has "spec") && ((((core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8")["spec"])["nodeName"]) == "node-1"))
-};"#, Arc::new(schema.clone())).unwrap(), HashMap::from([
-    ("resource.stored.v1".to_string(), r#"core::V1Pod::"80f44bb4-96d6-46bb-8c3e-ca5c797a04e8""#.parse().unwrap()),
-    ("resource.stored.metadata".to_string(), r#"meta::V1ObjectMeta::"b7b65842-3d3a-48a8-8239-0f48010c1867""#.parse().unwrap()),
-]))),
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    None,
+                    Some(vec![
+                        Selector::in_values("spec.nodeName", vec!["node-1".to_string()]),
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                .build(), Response::allow()),
+            ("node-1 cannot watch all pods cluster-wide",
+            AttributesBuilder::resource_and_selectors("system:node:node-1", Verb::Watch,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    None,
+                    None)
+                    .build(), Response::no_opinion()),
+            ("node-1 cannot watch pods cluster-wide when spec.nodeName is either node-1 or node-2",
+            AttributesBuilder::resource_and_selectors("system:node:node-1", Verb::Watch,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "pods".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    None,
+                    Some(vec![
+                        Selector::in_values("spec.nodeName", vec!["node-1".to_string(), "node-2".to_string()]),
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                .build(), Response::no_opinion()),
             ("lucas can get pods in the notinstorage namespace",
             AttributesBuilder::resource("lucas", Verb::Get,
                     StarWildcardStringSelector::Exact("".to_string()),
@@ -913,8 +887,8 @@ mod test {
                     EmptyWildcardStringSelector::Any,
                     None,
                     Some(vec![
-                        Selector::in_values("metadata.namespace", false, vec!["foo".to_string()]),
-                        Selector::in_values("metadata.name", false, vec!["bar".to_string()]),
+                        Selector::in_values("metadata.namespace", vec!["foo".to_string()]),
+                        Selector::in_values("metadata.name", vec!["bar".to_string()]),
                     ])
                 )
                 .build(), Response::allow()),
@@ -927,16 +901,75 @@ mod test {
                         EmptyWildcardStringSelector::Any,
                         None,
                         Some(vec![
-                            Selector::in_values("metadata.namespace", false, vec!["foo".to_string()]),
-                            Selector::in_values("metadata.name", false, vec!["bar".to_string()]),
+                            Selector::in_values("metadata.namespace", vec!["foo".to_string()]),
+                            Selector::in_values("metadata.name", vec!["bar".to_string()]),
                         ])
                     )
+                    .build(), Response::no_opinion()),
+            ("contour can list secrets cluster-wide (except the supersecret namespace), if the secret has the correct labels",
+            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:contour", Verb::List,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "secrets".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    Some(vec![
+                        Selector::in_values("allowed-ingress", vec!["contour".to_string(), "*".to_string()]),
+                        Selector::not_in_values("clearancelevel", vec!["supersecret".to_string(), "confidential".to_string()]),
+                    ]),
+                    Some(vec![
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                    .build(), Response::allow()),
+            ("contour cannot list istio's secrets cluster-wide, if the secret has the correct labels",
+            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:contour", Verb::List,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "secrets".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    Some(vec![
+                        Selector::in_values("allowed-ingress", vec!["contour".to_string(), "*".to_string(), "istio".to_string()]),
+                        Selector::not_in_values("clearancelevel", vec!["supersecret".to_string(), "confidential".to_string()]),
+                    ]),
+                    Some(vec![
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                    .build(), Response::no_opinion()),
+            ("contour cannot list secrets cluster-wide, if confidential secrets could match the label selector",
+            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:contour", Verb::List,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "secrets".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    Some(vec![
+                        Selector::in_values("allowed-ingress", vec!["contour".to_string(), "*".to_string()]),
+                        Selector::not_in_values("clearancelevel", vec!["supersecret".to_string()]),
+                    ]),
+                    Some(vec![
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                    .build(), Response::no_opinion()),
+            ("contour cannot list secrets cluster-wide, if confidential or supersecret secrets could match the label selector (whole clearancelevel label selector omitted)",
+            AttributesBuilder::resource_and_selectors("system:serviceaccount:foo:contour", Verb::List,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "secrets".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    Some(vec![
+                        Selector::in_values("allowed-ingress", vec!["contour".to_string(), "*".to_string()]),
+                    ]),
+                    Some(vec![
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
                     .build(), Response::no_opinion()),
         ];
 
         for (description, attrs, expected_resp) in test_cases {
             println!("{description}");
-            let resp = authorizer.is_authorized_response(attrs);
+            let resp = authorizer.is_authorized_response(attrs).await;
             assert_eq!(
                 expected_resp.decision, resp.decision,
                 "got {} with reason: {}, errors: {:?}",

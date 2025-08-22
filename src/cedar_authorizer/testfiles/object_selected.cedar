@@ -8,7 +8,7 @@ permit(
     resource.resourceCombined == "pods" &&
     !(resource has request) &&
     // Actual policy
-    resource has stored &&
+    resource has stored.metadata.labels &&
     resource.stored.metadata.labels.hasTag("env") && 
     ["test", "dev"].contains(resource.stored.metadata.labels.getTag("env")) &&
     resource.stored.metadata.labels.hasTag("owner") && 

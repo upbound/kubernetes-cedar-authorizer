@@ -25,44 +25,46 @@ namespace k8s {
     "username": __cedar::String
   };
 
-  entity Namespace = {
-    "metadata": meta::V1ObjectMeta,
-    "name": __cedar::String
-  };
-
   entity Resource = {
     "apiGroup": __cedar::String,
     // "apiVersion": __cedar::String,
-    "name": __cedar::String, // TODO: Rewrite the schema to use meta::UnknownString
-    "namespace"?: k8s::Namespace,
+    "name": __cedar::String,
+    // TODO: If Kubernetes had a distinction between "unset" and "any" namespace, this would be an optional field,
+    // that:
+    // - when the SAR says "unset", would be unset (i.e, "resource has namespace" would be false), and
+    // - when the SAR says "any", would be "any" (i.e, "resource has namespace" would be true), and
+    // - when the SAR says "exact", would be the exact namespace name (i.e, "resource has namespace" would be true).
+    // As we do not have this distinction, we cannot provide a way for checking if the namespace is "set" or "unset",
+    // and thus this is a required field.
+    "namespace": __cedar::String,
     "resourceCombined": __cedar::String
   };
 
+  action "create" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "get" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "list" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
+  action "watch" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    context: {}
+  };
+
   action "*" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
-    context: {}
-  };
-
-  action "create" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
-    context: {}
-  };
-
-  action "get" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
-    context: {}
-  };
-
-  action "list" appliesTo {
-    principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
-    context: {}
-  };
-
-  action "watch" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
     resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
     context: {}
@@ -112,14 +114,15 @@ namespace core {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "pods"
     "name": __cedar::String,
-    "namespace": k8s::Namespace,
+    "namespace": __cedar::String,
+    "namespaceMetadata"?: meta::V1ObjectMeta,
     "request"?: core::VersionedPod,
     "stored"?: core::VersionedPod
   };
   type VersionedPod = {
     "apiVersion": __cedar::String,        // always "v1"
     "kind": __cedar::String,              // always "Pod"
-    "metadata": meta::V1ObjectMeta,
+    "metadata"?: meta::V1ObjectMeta,
     "v1"?: core::V1Pod
   };
   entity V1Pod = {
@@ -139,7 +142,8 @@ namespace core {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "secrets"
     "name": __cedar::String,
-    "namespace": k8s::Namespace,
+    "namespace": __cedar::String,
+    "namespaceMetadata"?: meta::V1ObjectMeta,
     "request"?: core::VersionedSecret,
     "stored"?: core::VersionedSecret
   };
@@ -161,7 +165,8 @@ namespace core {
     "apiGroup": __cedar::String,          // always ""
     "resourceCombined": __cedar::String,  // always "pods/status"
     "name": __cedar::String,
-    "namespace": k8s::Namespace,
+    "namespace": __cedar::String,
+    "namespaceMetadata"?: meta::V1ObjectMeta,
     "request"?: core::VersionedPodStatus,
     "stored"?: core::VersionedPodStatus
   };
@@ -188,10 +193,10 @@ namespace meta {
   } tags Set<__cedar::String>;
 
   entity V1ObjectMeta = {
-    "annotations": meta::StringToStringMap,
+    "annotations"?: meta::StringToStringMap,
     "deleted": __cedar::Bool,
-    "finalizers": Set<__cedar::String>,
-    "labels": meta::StringToStringMap,
+    "finalizers"?: Set<__cedar::String>,
+    "labels"?: meta::StringToStringMap,
     "uid"?: __cedar::String
   };
 }
