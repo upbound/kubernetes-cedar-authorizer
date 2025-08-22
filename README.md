@@ -16,6 +16,10 @@ results here and/or later in Cedar Access Control for Kubernetes.
 
 Let Lucas know if you have feedback or ideas.
 
+**NOTE:** This project is an experiment, and is not yet ready for production
+use. Do not under any circumstances use it in production. This is not an Upbound
+product.
+
 ## Context
 
 By design, Kubernetes authorization operates only on _metadata_, on attributes
