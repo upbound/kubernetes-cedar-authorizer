@@ -2,10 +2,8 @@ use cedar_policy_core::entities::Schema;
 use cedar_policy_core::validator::json_schema::{CommonTypeId, NamespaceDefinition};
 use cedar_policy_core::validator::{json_schema, RawName};
 use cedar_policy_symcc::solver::Solver;
-use k8s_openapi::api::core::v1 as corev1;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 use kube::core::GroupVersion;
-use kube::{self};
 use smol_str::{SmolStr, ToSmolStr};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -32,7 +30,6 @@ use crate::schema::core::{
 
 use super::entitybuilder::{BuiltEntity, EntityBuilder, RecordBuilder, RecordBuilderImpl};
 use super::kube_invariants::SchemaError;
-use super::kubestore::KubeStore;
 
 static API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse().unwrap());
 
@@ -57,30 +54,20 @@ static API_GROUP_ANNOTATION: LazyLock<AnyId> = LazyLock::new(|| "apiGroup".parse
 // TODO: Disallow usage of "is k8s::Resource", such that we do not need to do authorization requests separately for "untyped" and "typed" variants?
 //   If we make it such that (given you restrict the verb to some resource verb) you MUST keep the policy open to all typed variants, then
 //   we probably have an easier time analyzing as well who has access to some given resource, and we don't need rewrites from untyped -> typed worlds.
-pub struct CedarKubeAuthorizer<
-    S: KubeStore<corev1::Namespace>,
-    F: symcc::SolverFactory<C>,
-    C: Solver,
-> {
+pub struct CedarKubeAuthorizer<F: symcc::SolverFactory<C>, C: Solver> {
     policies: kube_invariants::PolicySet,
-    namespaces: S,
     symcc_evaluator: symcc::SymbolicEvaluator<F, C>,
-    // k8s_ns: &'a NamespaceDefinition<RawName>,
 }
 
-impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
-    CedarKubeAuthorizer<S, F, C>
-{
+impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
     // TODO: Add possibility to dynamically update the schema and policies later as well.
     pub fn new(
         policies: kube_invariants::PolicySet,
-        namespaces: S,
         symcc_factory: F,
     ) -> Result<Self, SchemaError> {
         Ok(Self {
             symcc_evaluator: symcc::SymbolicEvaluator::new(policies.schema(), symcc_factory)?,
             policies,
-            namespaces,
         })
     }
 
@@ -133,24 +120,6 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
 
         Ok(entity_builder.build(principal_type))
     }
-
-    /*fn namespace_entity(&self, ns_name: &str) -> Result<BuiltEntity, AuthorizerError> {
-        let stored_ns = self.namespaces.get(&reflector::ObjectRef::new(ns_name));
-        let stored_ns_metadata = stored_ns.as_ref().map(|ns| &ns.metadata);
-
-        Ok(EntityBuilder::new()
-            // Note: resource.namespace.name is populated (if non-wildcard), although the namespace
-            // does not exist in Kubernetes, and thus no metadata is available (left unknown).
-            .with_attr("name", ns_name)
-            .with_attr(
-                "metadata",
-                match stored_ns_metadata {
-                    Some(ns_metadata) => PartialValue::Known(ns_metadata),
-                    None => PartialValue::Unknown,
-                },
-            )
-            .build(ENTITY_NAMESPACE.name.name()))
-    }*/
 
     fn construct_resource(
         &self,
@@ -422,7 +391,6 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
         &self,
         attrs: &Attributes,
         action: &str,
-        action_schemadef: &json_schema::ActionType<RawName>,
         cedar_ns_name: &Option<Name>,
     ) -> Result<DetailedDecision, AuthorizerError> {
         let action_capability = self
@@ -554,11 +522,8 @@ impl<S: KubeStore<corev1::Namespace>, F: symcc::SolverFactory<C>, C: Solver>
     }
 }
 
-impl<
-        S: KubeStore<corev1::Namespace> + Send + Sync,
-        F: symcc::SolverFactory<C> + Send + Sync,
-        C: Solver + Send + Sync,
-    > KubernetesAuthorizer for CedarKubeAuthorizer<S, F, C>
+impl<F: symcc::SolverFactory<C> + Send + Sync, C: Solver + Send + Sync> KubernetesAuthorizer
+    for CedarKubeAuthorizer<F, C>
 {
     async fn is_authorized(&self, mut attrs: Attributes) -> Result<Response, AuthorizerError> {
         let action_str = attrs.verb.to_string();
@@ -594,10 +559,9 @@ impl<
                 ))
             })?;
 
-        let action_schemadef = match cedar_ns.actions.get(action_str.as_str()) {
-            Some(action_schemadef) => action_schemadef,
-            None => return Err(AuthorizerError::UnsupportedVerb(action_str)),
-        };
+        if !cedar_ns.actions.contains_key(action_str.as_str()) {
+            return Err(AuthorizerError::UnsupportedVerb(action_str));
+        }
 
         match attrs.verb {
             // If the action is Any, verify that all actions are unconditionally allowed.
@@ -606,14 +570,9 @@ impl<
                 let mut allowed_ids = HashSet::new();
                 // TODO: Check the * action first, then others.
                 // Deliberately shadow the action_str and action_schemadef variables so they aren't accidentally used.
-                for (action_str, action_schemadef) in cedar_ns.actions.iter() {
+                for (action_str, _) in cedar_ns.actions.iter() {
                     let resp = self
-                        .is_authorized_for_action(
-                            &attrs,
-                            action_str.as_str(),
-                            action_schemadef,
-                            cedar_ns_name,
-                        )
+                        .is_authorized_for_action(&attrs, action_str.as_str(), cedar_ns_name)
                         .await?;
                     // TODO: Propagate errors?
 
@@ -658,7 +617,7 @@ impl<
             // TODO: Maybe we want still to fold here too?
             _ => {
                 match self
-                    .is_authorized_for_action(&attrs, &action_str, action_schemadef, cedar_ns_name)
+                    .is_authorized_for_action(&attrs, &action_str, cedar_ns_name)
                     .await?
                 {
                     // TODO: Propagate errors
@@ -686,15 +645,6 @@ impl<
         }
     }
 }
-
-// TODO: This should be upstreamed to cedar-policy-core.
-/*fn namespace_of_name(name: &Name) -> Option<Name> {
-    let internal_name = name.as_ref();
-    match internal_name.namespace().as_str() {
-        "" => None,
-        namespace => Some(namespace.parse().unwrap()),
-    }
-}*/
 
 // TODO: Translate to connect verbs
 
@@ -727,34 +677,10 @@ fn type_to_record(
     }
 }
 
-/*fn entity_ref_of_type(
-    main_ty: &json_schema::Type<RawName>,
-    relevant_namespace: Option<&Name>,
-) -> Result<InternalName, AuthorizerError> {
-    let raw_name = match main_ty {
-        json_schema::Type::Type { ty, .. } => match ty {
-            json_schema::TypeVariant::Entity { name } => name.clone(),
-            json_schema::TypeVariant::EntityOrCommon { type_name } => type_name.clone(),
-            _ => {
-                return Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                    "Expected entity reference, got {main_ty}"
-                )))
-            }
-        },
-        _ => {
-            return Err(AuthorizerError::UnexpectedSchemaShape(format!(
-                "Expected entity reference, got {main_ty}"
-            )))
-        }
-    };
-    Ok(raw_name.qualify_with_name(relevant_namespace))
-}*/
-
 mod test {
 
     #[tokio::test]
     async fn test_is_authorized() {
-        use super::super::kubestore::TestKubeStore;
         use crate::cedar_authorizer::kube_invariants;
         use crate::k8s_authorizer::test_utils::AttributesBuilder;
         use crate::k8s_authorizer::Selector;
@@ -765,11 +691,9 @@ mod test {
         use cedar_policy::PolicySet;
         use cedar_policy_core::extensions::Extensions;
         use cedar_policy_core::validator::json_schema::Fragment;
-        use k8s_openapi::api::core::v1 as corev1;
-        use k8s_openapi::apimachinery::pkg::apis::meta::v1 as metav1;
 
         use crate::cedar_authorizer::symcc::LocalSolverFactory;
-        use std::collections::{BTreeMap, HashMap};
+        use std::collections::HashMap;
         use std::str::FromStr;
         use std::sync::Arc;
 
@@ -780,52 +704,12 @@ mod test {
         )
         .unwrap();
 
-        let namespace_store = TestKubeStore::new(vec![
-            corev1::Namespace {
-                metadata: metav1::ObjectMeta {
-                    name: Some("foo".to_string()),
-                    uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
-                    labels: Some(BTreeMap::from([(
-                        "serviceaccounts-allowed".to_string(),
-                        "true".to_string(),
-                    )])),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            /*corev1::Namespace {
-                metadata: metav1::ObjectMeta {
-                    name: Some("supersecret".to_string()),
-                    uid: Some("1e00c0eb-ec4c-41a2-bb59-e7dea5b21b50".to_string()),
-                    labels: Some(BTreeMap::from([(
-                        "serviceaccounts-allowed".to_string(),
-                        "true".to_string(),
-                    )])),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },*/
-            corev1::Namespace {
-                metadata: metav1::ObjectMeta {
-                    name: Some("bar".to_string()),
-                    uid: Some("5a16a27e-f43b-4a07-a0d2-bf111f3d39ef".to_string()),
-                    labels: Some(BTreeMap::from([(
-                        "serviceaccounts-allowed".to_string(),
-                        "false".to_string(),
-                    )])),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        ]);
-
         let schema = super::kube_invariants::Schema::new(schema).unwrap();
         let policies =
             super::kube_invariants::PolicySet::new(policies.as_ref(), Arc::new(schema.clone()))
                 .unwrap();
 
-        let authorizer =
-            super::CedarKubeAuthorizer::new(policies, namespace_store, LocalSolverFactory).unwrap();
+        let authorizer = super::CedarKubeAuthorizer::new(policies, LocalSolverFactory).unwrap();
 
         // TODO: Fix validation problem with nonresourceurl and any verb.
         let test_cases = vec![

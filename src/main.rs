@@ -5,19 +5,15 @@ use axum::{
 };
 use itertools::Itertools;
 use kubernetes_cedar_authorizer::{
-    cedar_authorizer::{self, kubestore::KubeStoreImpl, symcc::LocalSolverFactory},
+    cedar_authorizer::{self, symcc::LocalSolverFactory},
     k8s_authorizer::{self, KubernetesAuthorizer},
 };
 
 use axum_server::tls_rustls::RustlsConfig;
 use cedar_policy::PolicySet;
-use k8s_openapi::api::{
-    authorization::v1::{SubjectAccessReview, SubjectAccessReviewStatus},
-    core::v1 as corev1,
-};
+use k8s_openapi::api::authorization::v1::{SubjectAccessReview, SubjectAccessReviewStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 
 use axum::extract::State;
 use cedar_policy_core::{extensions::Extensions, validator::json_schema::Fragment};
@@ -118,14 +114,6 @@ async fn run() -> Result<(), SetupError> {
     let policy_file = std::fs::read_to_string(policy_file).map_err(SetupError::todo)?;
     let policies = policy_file.parse::<PolicySet>().map_err(SetupError::todo)?;
 
-    let cancel = CancellationToken::new();
-
-    // Infer the runtime environment and try to create a Kubernetes Client
-    let kube_client = kube::Client::try_default().await?;
-
-    let namespaces: kube::Api<corev1::Namespace> = kube::Api::all(kube_client);
-    let namespace_store = KubeStoreImpl::new(namespaces, cancel.clone());
-
     let schema =
         cedar_authorizer::kube_invariants::Schema::new(schema).map_err(SetupError::todo)?;
     let policies = cedar_authorizer::kube_invariants::PolicySet::new(
@@ -135,7 +123,7 @@ async fn run() -> Result<(), SetupError> {
     .map_err(SetupError::todo)?;
 
     let authorizer = Arc::new(
-        cedar_authorizer::CedarKubeAuthorizer::new(policies, namespace_store, LocalSolverFactory)
+        cedar_authorizer::CedarKubeAuthorizer::new(policies, LocalSolverFactory)
             .map_err(SetupError::todo)?,
     );
 
@@ -189,7 +177,6 @@ impl SetupError {
 }
 
 type CedarKubeAuthorizer = cedar_authorizer::authorizer::CedarKubeAuthorizer<
-    cedar_authorizer::kubestore::KubeStoreImpl<corev1::Namespace>,
     cedar_authorizer::symcc::LocalSolverFactory,
     cedar_authorizer::LocalSolver,
 >;

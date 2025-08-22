@@ -372,24 +372,6 @@ impl WithExprBuilder for ast::Expr<()> {
     }
 }
 
-/*struct RestrictedExprBuilder {
-    expr: ast::Expr<()>,
-}
-
-impl RestrictedExprBuilder {
-    fn new<T: Into<ast::Expr<()>>>(expr: T) -> Self {
-        Self { expr: expr.into() }
-    }
-
-    fn and<T: Into<ast::Expr<()>>>(self, other: T) -> Self {
-        Self { expr: ast::Expr::and(self.expr, other.into()) }
-    }
-
-    fn build(self) -> ast::Expr<()> {
-        self.expr
-    }
-}*/
-
 mod test {
     #[test]
     fn test_field_selector_to_expr() {

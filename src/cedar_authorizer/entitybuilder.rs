@@ -67,11 +67,6 @@ impl EntityBuilder {
         }
     }
 
-    // TODO: Make this cleaner?
-    /*pub(super) fn build_unknown_internal_name(entity_type_name: InternalName) -> BuiltEntity {
-        Self::build_unknown(entity_type_name.to_string().parse().unwrap())
-    }*/
-
     pub(super) fn build(mut self, entity_type_name: Name) -> BuiltEntity {
         let eid = match self.entity_eid {
             Some(eid) => eid,
