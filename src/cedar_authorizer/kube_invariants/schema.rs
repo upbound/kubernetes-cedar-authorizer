@@ -4,14 +4,17 @@ use std::{
 };
 
 use cedar_policy_core::{
-    ast,
-    validator::{RawName, ValidatorSchema},
+    ast::{self, Expr, ExprKind, Var},
+    validator::{json_schema::ApplySpec, RawName, ValidatorSchema},
 };
 
 use cedar_policy_core::ast::{InternalName, Name, UnreservedId};
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
 
-use crate::schema::core::{K8S_NONRESOURCE_NS, K8S_NS};
+use crate::{
+    k8s_authorizer::ResourceAttributes,
+    schema::core::{K8S_NONRESOURCE_NS, K8S_NS},
+};
 
 use super::err::SchemaError;
 
@@ -33,9 +36,11 @@ static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
                 "namespace".to_string(),
                 "meta::UnknownString".parse().unwrap(),
             ),
-            ("path".to_string(), "meta::UnknownString".parse().unwrap()),
         ])
     });
+
+static STATIC_NONRESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
+    LazyLock::new(|| HashMap::from([("path".to_string(), "meta::UnknownString".parse().unwrap())]));
 
 #[derive(Clone)]
 pub struct Schema {
@@ -49,12 +54,14 @@ impl Schema {
         Self::rewrite_schema(
             &mut schema,
             K8S_NS.clone(),
+            |apply_spec| &apply_spec.resource_types,
             &STATIC_RESOURCE_ATTRIBUTE_REWRITES,
         )?;
         Self::rewrite_schema(
             &mut schema,
             K8S_NONRESOURCE_NS.clone(),
-            &STATIC_RESOURCE_ATTRIBUTE_REWRITES,
+            |apply_spec| &apply_spec.resource_types,
+            &STATIC_NONRESOURCE_ATTRIBUTE_REWRITES,
         )?;
 
         let validator_schema: cedar_policy_core::validator::ValidatorSchema =
@@ -75,10 +82,6 @@ impl Schema {
                 ),
                 (
                     (K8S_NS.clone(), "deletecollection"),
-                    ActionCapability::with_selectors(),
-                ),
-                (
-                    (K8S_NS.clone(), "impersonate"),
                     ActionCapability::with_selectors(),
                 ),
                 // Create and connect only have a request object.
@@ -104,6 +107,12 @@ impl Schema {
                     (K8S_NS.clone(), "delete"),
                     ActionCapability::with_objects(false, true),
                 ),
+                // "impersonate" cannot return conditions
+                // "constrainedimpersonate", however, can return conditions.
+                (
+                    (K8S_NS.clone(), "constrainedimpersonate"),
+                    ActionCapability::with_conditional_decision(),
+                ),
                 // Anything not in this list supports none of these capabilities.
                 // For example, none of the non-resource actions supports any of these capabilities.
             ]),
@@ -128,18 +137,15 @@ impl Schema {
             .unwrap_or_default()
     }
 
-    pub fn rewritten_resource_attributes(&self) -> &HashMap<String, RawName> {
-        &STATIC_RESOURCE_ATTRIBUTE_REWRITES
-    }
-
     pub fn get_fragment(&self) -> &Fragment<RawName> {
         &self.schema
     }
 
-    fn rewrite_schema(
+    fn rewrite_schema<F: Fn(&ApplySpec<RawName>) -> &Vec<RawName>>(
         schema: &mut Fragment<RawName>,
         actions_ns_name: Option<Name>,
-        rewrite_resource_attr_to_entity: &HashMap<String, RawName>,
+        rewrite_attr_to_entity_fn: F,
+        rewrite_attr_to_entity: &HashMap<String, RawName>,
     ) -> Result<(), SchemaError> {
         let actions_ns = schema
             .0
@@ -152,11 +158,12 @@ impl Schema {
                     .unwrap_or_default()
             )))?;
 
-        let resource_types: HashSet<InternalName> = actions_ns
+        let type_names: HashSet<InternalName> = actions_ns
             .actions
             .values()
             .flat_map(|action| action.applies_to.iter())
-            .flat_map(|applies_to| applies_to.resource_types.iter())
+            .map(rewrite_attr_to_entity_fn)
+            .flat_map(|type_names| type_names.iter())
             .map(|resource_type| {
                 resource_type
                     .clone()
@@ -164,22 +171,27 @@ impl Schema {
             })
             .collect();
 
-        for resource_type in resource_types {
-            let resource_type_ns = match schema.0.get_mut(&ns_of_internal_name(&resource_type)) {
+        for type_internalname in type_names {
+            let resource_type_ns = match schema.0.get_mut(&ns_of_internal_name(&type_internalname))
+            {
                 Some(ns) => ns,
                 None => {
                     return Err(SchemaError::SchemaRewriteError(format!(
                         "Namespace {} not found in schema",
-                        resource_type.namespace()
+                        type_internalname.namespace()
                     )))
                 }
             };
-            let id = UnreservedId::try_from(resource_type.basename().clone()).unwrap();
-            let resource_type_name = match resource_type_ns.entity_types.get_mut(&id) {
+            let id = UnreservedId::try_from(type_internalname.basename().clone()).unwrap();
+            let entity_type = match resource_type_ns.entity_types.get_mut(&id) {
                 Some(resource_type) => resource_type,
-                None => return Err(SchemaError::MissingResourceType(resource_type.to_string())),
+                None => {
+                    return Err(SchemaError::MissingResourceType(
+                        type_internalname.to_string(),
+                    ))
+                }
             };
-            match &mut resource_type_name.kind {
+            match &mut entity_type.kind {
                 EntityTypeKind::Standard(json_schema::StandardEntityType {
                     shape:
                         json_schema::AttributesOrContext(json_schema::Type::Type {
@@ -191,8 +203,8 @@ impl Schema {
                         }),
                     ..
                 }) => {
-                    for (resource_attr_name, new_entity_type_name) in rewrite_resource_attr_to_entity {
-                        if let Some(attr) = attributes.get_mut(resource_attr_name.as_str()) {
+                    for (attr_name, new_entity_type_name) in rewrite_attr_to_entity {
+                        if let Some(attr) = attributes.get_mut(attr_name.as_str()) {
                             *attr = json_schema::TypeOfAttribute {
                                 ty: json_schema::Type::Type {
                                     ty: json_schema::TypeVariant::Entity {
@@ -208,12 +220,82 @@ impl Schema {
                 }
                 _ => {
                     return Err(SchemaError::SchemaRewriteError(format!(
-                        "Resource type {resource_type} is not a standard entity record type as expected"
+                        "Resource type {type_internalname} is not a standard entity record type as expected"
                     )))
                 }
             }
         }
         Ok(())
+    }
+
+    /// rewrite_expr rewrites an expression to be compatible with Typed Partial Evaluation, for use-cases where
+    /// some attributes are unknown, but some are known, using the rewrite documented in:
+    /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
+    ///
+    /// However, the rewrite is only applied to the special case expression "resource.foo" is rewritten to "resource.foo.value", when
+    /// "foo" is in the substitutions set.
+    #[allow(clippy::only_used_in_recursion)] // TODO: Should be dependent on the actual rewrites, instead of using a static set.
+    pub fn rewrite_expr(&self, expr: &Expr) -> Expr {
+        match expr.expr_kind() {
+            ExprKind::And { left, right } => {
+                Expr::and(self.rewrite_expr(left), self.rewrite_expr(right))
+            }
+            ExprKind::BinaryApp { op, arg1, arg2 } => {
+                Expr::binary_app(*op, self.rewrite_expr(arg1), self.rewrite_expr(arg2))
+            }
+            ExprKind::ExtensionFunctionApp { fn_name, args } => Expr::call_extension_fn(
+                fn_name.clone(),
+                args.iter().map(|a| self.rewrite_expr(a)).collect(),
+            ),
+            // TODO: This could become quite a lot more generic, now it's only for principal and resource attributes.
+            ExprKind::GetAttr {
+                expr: get_expr,
+                attr,
+            } => {
+                if matches!(get_expr.expr_kind(), ExprKind::Var(Var::Resource)) {
+                    // TODO: To make this "actually" work, we'd need to know what the type of the resource is/can be here.
+                    if STATIC_RESOURCE_ATTRIBUTE_REWRITES.contains_key(attr.as_str()) {
+                        return Expr::get_attr(expr.clone(), "value".into());
+                    }
+                    if STATIC_NONRESOURCE_ATTRIBUTE_REWRITES.contains_key(attr.as_str()) {
+                        return Expr::get_attr(expr.clone(), "value".into());
+                    }
+                }
+                Expr::get_attr(self.rewrite_expr(get_expr), attr.clone())
+            }
+            ExprKind::HasAttr { expr, attr } => {
+                Expr::has_attr(self.rewrite_expr(expr), attr.clone())
+            }
+
+            ExprKind::If {
+                test_expr,
+                then_expr,
+                else_expr,
+            } => Expr::ite(
+                self.rewrite_expr(test_expr),
+                self.rewrite_expr(then_expr),
+                self.rewrite_expr(else_expr),
+            ),
+            ExprKind::Is { expr, entity_type } => {
+                Expr::is_entity_type(self.rewrite_expr(expr), entity_type.clone())
+            }
+            ExprKind::Like { expr, pattern } => {
+                Expr::like(self.rewrite_expr(expr), pattern.clone())
+            }
+            ExprKind::Or { left, right } => {
+                Expr::or(self.rewrite_expr(left), self.rewrite_expr(right))
+            }
+            ExprKind::Record(attrs) => {
+                Expr::record(attrs.iter().map(|(k, v)| (k.clone(), self.rewrite_expr(v)))).unwrap()
+            }
+            ExprKind::Set(items) => Expr::set(items.iter().map(|e| self.rewrite_expr(e))),
+            ExprKind::UnaryApp { op, arg } => Expr::unary_app(*op, self.rewrite_expr(arg)),
+            ExprKind::Var(var) => Expr::var(*var),
+            ExprKind::Lit(lit) => Expr::val(lit.clone()),
+            ExprKind::Slot(slot_id) => Expr::slot(*slot_id),
+            ExprKind::Unknown(unknown) => Expr::unknown(unknown.clone()),
+        }
+        .with_maybe_source_loc(expr.source_loc().cloned())
     }
 }
 
@@ -253,15 +335,37 @@ pub struct ActionCapability {
     selectors: bool,
     request_object: bool,
     stored_object: bool,
+    always_conditional_decision_supported: bool,
 }
 
 impl ActionCapability {
-    pub fn supports_conditional_decision(&self) -> bool {
-        self.request_object || self.stored_object
+    pub fn supports_conditional_decision(&self, resource_attrs: &ResourceAttributes) -> bool {
+        // Conditional Authorization is only supported for typed resources.
+        // Thus, fold any untyped resource request residual into NoOpinion.
+        // TODO: If the resource is an untyped resource request, it might still need symcc,
+        // because of the 'resource.resourceCombined like "*/scale"' expressions.
+        // https://github.com/upbound/kubernetes-cedar-authorizer/issues/38
+        // However, that could also be solved without symcc, by manual traversal for the specific use-case.
+        if !resource_attrs.is_typed_resource() {
+            return false;
+        }
+
+        if self.always_conditional_decision_supported {
+            return true;
+        }
+
+        // Conditional Authorization via admission control is only supported for an exact apiGroup, resource, and apiVersion.
+        resource_attrs.api_version.is_exact() && (self.request_object || self.stored_object)
     }
 
-    pub fn supports_selectors(&self) -> bool {
-        self.selectors
+    pub fn supports_selectors(&self, resource_attrs: &ResourceAttributes) -> bool {
+        // Selector authorization is only supported for typed resources.
+        // Thus, fold any untyped resource request residual into NoOpinion.
+        // TODO: If the resource is an untyped resource request, it might still need symcc,
+        // because of the 'resource.resourceCombined like "*/scale"' expressions.
+        // https://github.com/upbound/kubernetes-cedar-authorizer/issues/38
+        // However, that could also be solved without symcc, by manual traversal for the specific use-case.
+        resource_attrs.is_typed_resource() && self.selectors
     }
 
     pub fn has_request_object(&self) -> bool {
@@ -277,6 +381,7 @@ impl ActionCapability {
             selectors: true,
             request_object: false,
             stored_object: false,
+            always_conditional_decision_supported: false,
         }
     }
 
@@ -285,6 +390,16 @@ impl ActionCapability {
             selectors: false,
             request_object,
             stored_object,
+            always_conditional_decision_supported: true,
+        }
+    }
+
+    pub fn with_conditional_decision() -> Self {
+        Self {
+            selectors: false,
+            request_object: false,
+            stored_object: false,
+            always_conditional_decision_supported: true,
         }
     }
 }
@@ -310,6 +425,7 @@ mod test {
         Schema::rewrite_schema(
             &mut schema,
             K8S_NS.clone(),
+            |apply_spec| &apply_spec.resource_types,
             &rewrite_resource_attr_to_entity,
         )
         .unwrap();
@@ -326,4 +442,67 @@ mod test {
             assert_eq!("actual", "expected")
         }
     }
+
+    // TODO: Reactivate test.
+    /*#[test]
+    fn test_rewrite_expr() {
+        use super::PolicySet;
+        use cedar_policy_core::ast::Expr;
+        use std::collections::HashMap;
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
+        assert_eq!(
+            PolicySet::rewrite_expr(&expr, &HashMap::new()).to_string(),
+            r#"(resource["apiGroup"]) == "foo""#
+        );
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
+        assert_eq!(
+            PolicySet::rewrite_expr(
+                &expr,
+                &HashMap::from([(
+                    "apiGroup".to_string(),
+                    "meta::UnknownString".parse().unwrap()
+                )])
+            )
+            .to_string(),
+            r#"((resource["apiGroup"])["value"]) == "foo""#
+        );
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo" && [resource.name].contains("bar")"#
+            .parse()
+            .unwrap();
+        assert_eq!(
+            PolicySet::rewrite_expr(
+                &expr,
+                &HashMap::from([
+                    (
+                        "apiGroup".to_string(),
+                        "meta::UnknownString".parse().unwrap()
+                    ),
+                    ("name".to_string(), "meta::UnknownString".parse().unwrap())
+                ])
+            )
+            .to_string(),
+            r#"(((resource["apiGroup"])["value"]) == "foo") && ([(resource["name"])["value"]].contains("bar"))"#
+        );
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
+        assert!(!has_resource_attribute(&expr, &HashSet::from([])));
+
+        let expr: Expr<()> = r#"principal.apiGroup == "foo""#.parse().unwrap();
+        assert!(!has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
+
+        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
+        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
+
+        let expr: Expr<()> = r#"resource has apiGroup"#.parse().unwrap();
+        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
+
+        let expr: Expr<()> = r#"resource.apiGroup.foobar"#.parse().unwrap();
+        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
+
+        let expr: Expr<()> = r#"principal.name == "foo" && resource.apiGroup == "foo""#.parse().unwrap();
+        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
+    }*/
 }

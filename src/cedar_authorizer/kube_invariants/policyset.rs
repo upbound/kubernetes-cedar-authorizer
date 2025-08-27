@@ -1,17 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use cedar_policy_core::{
-    ast::{self, Expr, ExprKind, Var},
-    tpe::{
-        entities::{PartialEntities, PartialEntity},
-        request::PartialRequest,
-        residual::Residual,
-    },
-    validator::RawName,
+    ast::{self, Expr, ExprKind},
+    tpe::{entities::PartialEntities, request::PartialRequest, residual::Residual},
 };
 
 use super::{
@@ -30,6 +25,7 @@ use itertools::Itertools;
 /// some attributes are unknown, but some are known, using the rewrite documented in:
 /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
 // TODO: Consider if it's worth taking the schema as a reference here, or just owning it.
+#[derive(Clone)]
 pub struct PolicySet {
     pub(super) policies: ast::PolicySet,
     schema: Arc<super::Schema>,
@@ -64,7 +60,7 @@ impl PolicySet {
         let substituted_policies = ast::PolicySet::try_from_iter(policies.policies().map(|p| {
             ast::Policy::from_when_clause(
                 p.effect(),
-                Self::rewrite_expr(&p.condition(), schema.rewritten_resource_attributes()),
+                schema.rewrite_expr(&p.condition()),
                 p.id().clone(),
                 p.loc().cloned(),
             )
@@ -204,93 +200,6 @@ impl PolicySet {
         }
     }
 
-    /// rewrite_expr rewrites an expression to be compatible with Typed Partial Evaluation, for use-cases where
-    /// some attributes are unknown, but some are known, using the rewrite documented in:
-    /// https://github.com/cedar-policy/rfcs/blob/main/text/0095-type-aware-partial-evaluation.md#contingent-authorization-with-entity-based-unknown-values
-    ///
-    /// However, the rewrite is only applied to the special case expression "resource.foo" is rewritten to "resource.foo.value", when
-    /// "foo" is in the substitutions set.
-    fn rewrite_expr(expr: &Expr, rewritten_resource_attributes: &HashMap<String, RawName>) -> Expr {
-        match expr.expr_kind() {
-            ExprKind::And { left, right } => Expr::and(
-                Self::rewrite_expr(left, rewritten_resource_attributes),
-                Self::rewrite_expr(right, rewritten_resource_attributes),
-            ),
-            ExprKind::BinaryApp { op, arg1, arg2 } => Expr::binary_app(
-                *op,
-                Self::rewrite_expr(arg1, rewritten_resource_attributes),
-                Self::rewrite_expr(arg2, rewritten_resource_attributes),
-            ),
-            ExprKind::ExtensionFunctionApp { fn_name, args } => Expr::call_extension_fn(
-                fn_name.clone(),
-                args.iter()
-                    .map(|a| Self::rewrite_expr(a, rewritten_resource_attributes))
-                    .collect(),
-            ),
-            // TODO: This could become quite a lot more generic, now it's only for resource attributes.
-            ExprKind::GetAttr {
-                expr: get_expr,
-                attr,
-            } => {
-                let is_resource = matches!(get_expr.expr_kind(), ExprKind::Var(Var::Resource));
-                if is_resource && rewritten_resource_attributes.contains_key(attr.as_str()) {
-                    return Expr::get_attr(expr.clone(), "value".into());
-                } else {
-                    Expr::get_attr(
-                        Self::rewrite_expr(get_expr, rewritten_resource_attributes),
-                        attr.clone(),
-                    )
-                }
-            }
-            ExprKind::HasAttr { expr, attr } => Expr::has_attr(
-                Self::rewrite_expr(expr, rewritten_resource_attributes),
-                attr.clone(),
-            ),
-
-            ExprKind::If {
-                test_expr,
-                then_expr,
-                else_expr,
-            } => Expr::ite(
-                Self::rewrite_expr(test_expr, rewritten_resource_attributes),
-                Self::rewrite_expr(then_expr, rewritten_resource_attributes),
-                Self::rewrite_expr(else_expr, rewritten_resource_attributes),
-            ),
-            ExprKind::Is { expr, entity_type } => Expr::is_entity_type(
-                Self::rewrite_expr(expr, rewritten_resource_attributes),
-                entity_type.clone(),
-            ),
-            ExprKind::Like { expr, pattern } => Expr::like(
-                Self::rewrite_expr(expr, rewritten_resource_attributes),
-                pattern.clone(),
-            ),
-            ExprKind::Or { left, right } => Expr::or(
-                Self::rewrite_expr(left, rewritten_resource_attributes),
-                Self::rewrite_expr(right, rewritten_resource_attributes),
-            ),
-            ExprKind::Record(attrs) => Expr::record(attrs.iter().map(|(k, v)| {
-                (
-                    k.clone(),
-                    Self::rewrite_expr(v, rewritten_resource_attributes),
-                )
-            }))
-            .unwrap(),
-            ExprKind::Set(items) => Expr::set(
-                items
-                    .iter()
-                    .map(|e| Self::rewrite_expr(e, rewritten_resource_attributes)),
-            ),
-            ExprKind::UnaryApp { op, arg } => {
-                Expr::unary_app(*op, Self::rewrite_expr(arg, rewritten_resource_attributes))
-            }
-            ExprKind::Var(var) => Expr::var(*var),
-            ExprKind::Lit(lit) => Expr::val(lit.clone()),
-            ExprKind::Slot(slot_id) => Expr::slot(*slot_id),
-            ExprKind::Unknown(unknown) => Expr::unknown(unknown.clone()),
-        }
-        .with_maybe_source_loc(expr.source_loc().cloned())
-    }
-
     pub fn is_empty(&self) -> bool {
         self.policies.is_empty()
     }
@@ -342,7 +251,6 @@ impl PolicySet {
         }
 
         // TODO: Surface erroring allow policies better.
-
         Ok(PartialResponseNew {
             schema: self.schema.clone(),
             tpe_response: res,
@@ -395,99 +303,7 @@ struct PartialEntityWithDebug {
     tags: Option<BTreeMap<SmolStr, ast::Value>>,
 }*/
 
-fn debug_entity(entity: PartialEntity) {
-    match cedar_policy_core::ast::Entity::new(
-        entity.uid,
-        entity
-            .attrs
-            .unwrap_or_default()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone().into())),
-        HashSet::new(),
-        entity
-            .ancestors
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect(),
-        entity
-            .tags
-            .unwrap_or_default()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone().into())),
-        cedar_policy_core::extensions::Extensions::all_available(),
-    ) {
-        Ok(entity) => match entity.to_json_value() {
-            Ok(s) => println!("{}", serde_json::to_string_pretty(&s).unwrap()),
-            Err(e) => println!("Error: {e:?}"),
-        },
-        Err(e) => println!("Error: {e:?}"),
-    }
-}
-
 mod test {
-    #[test]
-    fn test_has_resource_attribute() {
-        use super::PolicySet;
-        use cedar_policy_core::ast::Expr;
-        use std::collections::HashMap;
-
-        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
-        assert_eq!(
-            PolicySet::rewrite_expr(&expr, &HashMap::new()).to_string(),
-            r#"(resource["apiGroup"]) == "foo""#
-        );
-
-        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
-        assert_eq!(
-            PolicySet::rewrite_expr(
-                &expr,
-                &HashMap::from([(
-                    "apiGroup".to_string(),
-                    "meta::UnknownString".parse().unwrap()
-                )])
-            )
-            .to_string(),
-            r#"((resource["apiGroup"])["value"]) == "foo""#
-        );
-
-        let expr: Expr<()> = r#"resource.apiGroup == "foo" && [resource.name].contains("bar")"#
-            .parse()
-            .unwrap();
-        assert_eq!(
-            PolicySet::rewrite_expr(
-                &expr,
-                &HashMap::from([
-                    (
-                        "apiGroup".to_string(),
-                        "meta::UnknownString".parse().unwrap()
-                    ),
-                    ("name".to_string(), "meta::UnknownString".parse().unwrap())
-                ])
-            )
-            .to_string(),
-            r#"(((resource["apiGroup"])["value"]) == "foo") && ([(resource["name"])["value"]].contains("bar"))"#
-        );
-
-        /*let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
-        assert!(!has_resource_attribute(&expr, &HashSet::from([])));
-
-        let expr: Expr<()> = r#"principal.apiGroup == "foo""#.parse().unwrap();
-        assert!(!has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
-
-        let expr: Expr<()> = r#"resource.apiGroup == "foo""#.parse().unwrap();
-        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
-
-        let expr: Expr<()> = r#"resource has apiGroup"#.parse().unwrap();
-        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
-
-        let expr: Expr<()> = r#"resource.apiGroup.foobar"#.parse().unwrap();
-        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));
-
-        let expr: Expr<()> = r#"principal.name == "foo" && resource.apiGroup == "foo""#.parse().unwrap();
-        assert!(has_resource_attribute(&expr, &HashSet::from(["apiGroup".to_string()])));*/
-    }
-
     #[test]
     fn test_expr_has_in_k8s_resource() {
         use super::PolicySet;

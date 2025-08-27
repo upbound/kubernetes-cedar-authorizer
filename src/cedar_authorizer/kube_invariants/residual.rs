@@ -29,6 +29,7 @@ pub enum DetailedDecision {
     NoOpinion,
 }
 
+#[derive(Debug)]
 enum AllowDecision {
     Allow(Vec<ast::PolicyID>),
     Conditional(super::PolicySet),

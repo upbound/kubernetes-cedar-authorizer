@@ -2,7 +2,9 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crate::{
     cedar_authorizer::kube_invariants,
-    k8s_authorizer::{self, Attributes, RequestType, SymbolicEvaluationError},
+    k8s_authorizer::{
+        self, Attributes, RequestType, StarWildcardStringSelector, SymbolicEvaluationError,
+    },
 };
 use cedar_policy_core::{ast, expr_builder::ExprBuilder};
 use cedar_policy_symcc::{err::SolverError, solver::Solver, CedarSymCompiler};
@@ -17,7 +19,13 @@ pub enum SolverFactoryError {
     #[error(transparent)]
     SolverError(#[from] SolverError),
     #[error(transparent)]
-    ParserError(#[from] cedar_policy_symcc::err::Error),
+    ParserError(Box<cedar_policy_symcc::err::Error>),
+}
+
+impl From<cedar_policy_symcc::err::Error> for SolverFactoryError {
+    fn from(error: cedar_policy_symcc::err::Error) -> Self {
+        SolverFactoryError::ParserError(Box::new(error))
+    }
 }
 
 pub trait SolverFactory<S: Solver> {
@@ -60,7 +68,7 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
         reqenv: &cedar_policy::RequestEnv,
         is_authorized: kube_invariants::PolicySet,
         unknown_jsonpaths_to_uid: HashMap<String, ast::EntityUID>,
-        api_version: &str,
+        api_version: &StarWildcardStringSelector,
         namespace_scoped: bool,
     ) -> Result<bool, SymbolicEvaluationError> {
         let cedar_public_api_schema_ref = self.schema.as_ref().as_ref();
@@ -107,6 +115,7 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
                     api_version,
                     namespace_scoped,
                 );
+
                 object_selected_expr = apply_label_selectors_to_expr(
                     object_selected_expr,
                     resource_attrs.label_selector.as_ref(),
@@ -117,8 +126,8 @@ impl<F: SolverFactory<S>, S: Solver> SymbolicEvaluator<F, S> {
         }
 
         //println!("jsonpaths_to_uid: {unknown_jsonpaths_to_uid:?}, api_version: {api_version}, namespace_scoped: {namespace_scoped}");
-        println!("object_selected_expr: {object_selected_expr}");
-        println!("is_authorized: {is_authorized}");
+        //println!("object_selected_expr: {object_selected_expr}");
+        //println!("is_authorized: {is_authorized}");
 
         // TODO: Cedar to implement FromStr for PolicyID, and then use that.
         let object_selected =
@@ -170,7 +179,7 @@ fn apply_field_selectors_to_expr(
     mut object_selected_expr: ast::Expr<()>,
     field_selectors: Option<&Vec<k8s_authorizer::Selector>>,
     unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
-    api_version: &str,
+    api_version: &StarWildcardStringSelector,
     namespace_scoped: bool,
 ) -> ast::Expr<()> {
     if let Some(field_selectors) = field_selectors {
@@ -191,7 +200,7 @@ fn apply_field_selectors_to_expr(
 fn field_selector_to_expr(
     field_selector: &k8s_authorizer::Selector,
     unknown_jsonpaths_to_uid: &HashMap<String, ast::EntityUID>,
-    api_version: &str,
+    api_version: &StarWildcardStringSelector,
     namespace_scoped: bool,
 ) -> Option<ast::Expr<()>> {
     // Trim "." prefix, if any. TODO: This invariant should probably be in the parsing layer.
@@ -222,6 +231,13 @@ fn field_selector_to_expr(
         // TODO: Check if there are any metadata fieldselectors.
         Some(_) => return None,
         _ => {
+            let api_version = match api_version {
+                StarWildcardStringSelector::Exact(api_version) => api_version,
+                // If the api_version is unknown, then we can't apply the field selector.
+                // This is still sound, because it means that objectSelected(o) returns true for a wider
+                // range of objects, compared to if this field selector was applied.
+                StarWildcardStringSelector::Any => return None,
+            };
             let object = ast::Expr::val(
                 unknown_jsonpaths_to_uid
                     .get(format!("resource.stored.{api_version}").as_str())?
@@ -373,9 +389,11 @@ impl WithExprBuilder for ast::Expr<()> {
 }
 
 mod test {
+
     #[test]
     fn test_field_selector_to_expr() {
         use crate::k8s_authorizer;
+        use crate::k8s_authorizer::StarWildcardStringSelector;
         use std::collections::{HashMap, HashSet};
         let tests = vec![
             (
@@ -385,7 +403,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["node1".to_string(), "node2".to_string()])),
                 },
                 HashMap::new(),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 true,
                 None,
             ),
@@ -396,7 +414,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["ns1".to_string(), "ns2".to_string()])),
                 },
                 HashMap::new(),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 true,
                 None,
             ),
@@ -407,7 +425,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["node1".to_string(), "node2".to_string()])),
                 },
                 HashMap::new(),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 true,
                 None,
             ),
@@ -418,7 +436,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["node1".to_string(), "node2".to_string()])),
                 },
                 HashMap::from([("resource.name".to_string(), r#"meta::UnknownString::"foo""#.parse().unwrap())]),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 true,
                 Some(r#"true && (["node1", "node2"].contains(meta::UnknownString::"foo"["value"]))"#.to_string()),
             ),
@@ -429,7 +447,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["ns1".to_string(), "ns2".to_string()])),
                 },
                 HashMap::from([("resource.namespace".to_string(), r#"meta::UnknownString::"foo""#.parse().unwrap())]),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 true,
                 Some(r#"true && (["ns1", "ns2"].contains(meta::UnknownString::"foo"["value"]))"#.to_string()),
             ),
@@ -440,7 +458,7 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["ns1".to_string(), "ns2".to_string()])),
                 },
                 HashMap::from([("resource.namespace".to_string(), r#"meta::UnknownString::"foo""#.parse().unwrap())]),
-                "whatever",
+                StarWildcardStringSelector::Any,
                 false,
                 Some(r#"false && (["ns1", "ns2"].contains(meta::UnknownString::"foo"["value"]))"#.to_string()),
             ),
@@ -451,9 +469,20 @@ mod test {
                     op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["node1".to_string(), "node2".to_string()])),
                 },
                 HashMap::from([("resource.stored.v1".to_string(), r#"core::V1Node::"foo""#.parse().unwrap())]),
-                "v1",
+                StarWildcardStringSelector::Exact("v1".to_string()),
                 true,
                 Some(r#"((core::V1Node::"foo" has "spec") && ((core::V1Node::"foo"["spec"]) has "nodeName")) && (["node1", "node2"].contains((core::V1Node::"foo"["spec"])["nodeName"]))"#.to_string()),
+            ),
+            (
+                "Simple spec.nodeName case, with In predicate, but unknown apiVersion",
+                k8s_authorizer::Selector{
+                    key: ".spec.nodeName".to_string(),
+                    op: k8s_authorizer::SelectorPredicate::In(HashSet::from(["node1".to_string(), "node2".to_string()])),
+                },
+                HashMap::from([("resource.stored.v1".to_string(), r#"core::V1Node::"foo""#.parse().unwrap())]),
+                StarWildcardStringSelector::Any,
+                true,
+                None,
             ),
         ];
         for (
@@ -469,7 +498,7 @@ mod test {
             let got = super::field_selector_to_expr(
                 &field_selector,
                 &unknown_jsonpaths_to_uid,
-                api_version,
+                &api_version,
                 namespace_scoped,
             );
             if let Some(expr) = got.clone() {

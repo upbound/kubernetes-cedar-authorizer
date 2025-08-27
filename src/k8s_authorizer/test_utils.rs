@@ -1,16 +1,19 @@
-use std::collections::{BTreeMap, HashSet};
-
-use crate::k8s_authorizer::{NonResourceAttributes, RequestType, Selector};
-
+#[cfg(test)]
 use super::{
     Attributes, CombinedResource, EmptyWildcardStringSelector, ResourceAttributes,
     StarWildcardStringSelector, UserInfo, Verb,
 };
+#[cfg(test)]
+use crate::k8s_authorizer::{NonResourceAttributes, RequestType, Selector};
+#[cfg(test)]
+use std::collections::{BTreeMap, HashSet};
 
+#[cfg(test)]
 pub struct AttributesBuilder {
     attrs: Attributes,
 }
 
+#[cfg(test)]
 impl AttributesBuilder {
     pub fn nonresource(username: &str, verb: Verb, path: StarWildcardStringSelector) -> Self {
         Self {
@@ -49,6 +52,7 @@ impl AttributesBuilder {
         )
     }
 
+    #[warn(clippy::too_many_arguments)]
     pub fn resource_and_selectors(
         username: &str,
         verb: Verb,

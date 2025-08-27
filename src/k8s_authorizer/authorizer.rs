@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
-use crate::k8s_authorizer::{
-    CombinedResource, NonResourceAttributes, RequestType, StarWildcardStringSelector,
-};
+use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
 
 use super::err::ParseError;
 use crate::cedar_authorizer::kube_invariants;
@@ -162,25 +160,6 @@ impl Display for Decision {
 impl Attributes {
     pub fn from_subject_access_review(value: &SubjectAccessReview) -> Result<Self, ParseError> {
         Self::try_from(value.clone())
-    }
-    pub fn supports_conditional_authorization(&self) -> Option<(String, String, String)> {
-        match &self.request_type {
-            RequestType::Resource(ResourceAttributes {
-                api_group,
-                api_version,
-                resource,
-                ..
-            }) => match (api_group, api_version, resource) {
-                (
-                    StarWildcardStringSelector::Exact(api_group),
-                    StarWildcardStringSelector::Exact(api_version),
-                    CombinedResource::ResourceOnly { .. }
-                    | CombinedResource::ResourceSubresource { .. },
-                ) => Some((api_group.clone(), api_version.clone(), resource.to_string())),
-                _ => None,
-            },
-            RequestType::NonResource(_) => None,
-        }
     }
 }
 

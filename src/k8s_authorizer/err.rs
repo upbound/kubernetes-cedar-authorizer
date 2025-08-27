@@ -1,11 +1,23 @@
 #[derive(Debug, thiserror::Error)]
 pub enum SymbolicEvaluationError {
     #[error(transparent)]
-    SymccError(#[from] cedar_policy_symcc::err::Error),
+    SymccError(Box<cedar_policy_symcc::err::Error>),
     #[error(transparent)]
-    PolicySetError(#[from] cedar_policy::PolicySetError),
+    PolicySetError(Box<cedar_policy::PolicySetError>),
     #[error(transparent)]
     SolverFactoryError(#[from] crate::cedar_authorizer::symcc::SolverFactoryError),
+}
+
+impl From<cedar_policy_symcc::err::Error> for SymbolicEvaluationError {
+    fn from(error: cedar_policy_symcc::err::Error) -> Self {
+        SymbolicEvaluationError::SymccError(Box::new(error))
+    }
+}
+
+impl From<cedar_policy::PolicySetError> for SymbolicEvaluationError {
+    fn from(error: cedar_policy::PolicySetError) -> Self {
+        SymbolicEvaluationError::PolicySetError(Box::new(error))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +51,7 @@ pub enum AuthorizerError {
     #[error(transparent)]
     SymbolicEvaluationError(#[from] SymbolicEvaluationError),
     #[error(transparent)]
-    EntityAttrEvaluationError(#[from] cedar_policy_core::ast::EntityAttrEvaluationError),
+    EntityAttrEvaluationError(Box<cedar_policy_core::ast::EntityAttrEvaluationError>),
 }
 
 impl From<cedar_policy_core::parser::err::ParseErrors> for AuthorizerError {
@@ -57,6 +69,12 @@ impl From<cedar_policy_core::validator::RequestValidationError> for AuthorizerEr
 impl From<cedar_policy_core::tpe::err::EntitiesError> for AuthorizerError {
     fn from(errors: cedar_policy_core::tpe::err::EntitiesError) -> Self {
         AuthorizerError::EntitiesError(Box::new(errors))
+    }
+}
+
+impl From<cedar_policy_core::ast::EntityAttrEvaluationError> for AuthorizerError {
+    fn from(error: cedar_policy_core::ast::EntityAttrEvaluationError) -> Self {
+        AuthorizerError::EntityAttrEvaluationError(Box::new(error))
     }
 }
 
