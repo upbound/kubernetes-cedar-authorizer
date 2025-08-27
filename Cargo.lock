@@ -392,6 +392,7 @@ dependencies = [
 [[package]]
 name = "cedar-policy"
 version = "4.5.1"
+source = "git+https://github.com/luxas/cedar.git?rev=792e6d246440433f2d2a6a6adeadc910859919fc#792e6d246440433f2d2a6a6adeadc910859919fc"
 dependencies = [
  "cedar-policy-core",
  "cedar-policy-formatter",
@@ -409,6 +410,7 @@ dependencies = [
 [[package]]
 name = "cedar-policy-core"
 version = "4.5.1"
+source = "git+https://github.com/luxas/cedar.git?rev=792e6d246440433f2d2a6a6adeadc910859919fc#792e6d246440433f2d2a6a6adeadc910859919fc"
 dependencies = [
  "chrono",
  "educe",
@@ -433,6 +435,7 @@ dependencies = [
 [[package]]
 name = "cedar-policy-formatter"
 version = "4.5.1"
+source = "git+https://github.com/luxas/cedar.git?rev=792e6d246440433f2d2a6a6adeadc910859919fc#792e6d246440433f2d2a6a6adeadc910859919fc"
 dependencies = [
  "cedar-policy-core",
  "itertools 0.14.0",
@@ -446,6 +449,7 @@ dependencies = [
 [[package]]
 name = "cedar-policy-symcc"
 version = "0.1.0"
+source = "git+https://github.com/luxas/cedar.git?rev=792e6d246440433f2d2a6a6adeadc910859919fc#792e6d246440433f2d2a6a6adeadc910859919fc"
 dependencies = [
  "async-recursion",
  "cedar-policy",
