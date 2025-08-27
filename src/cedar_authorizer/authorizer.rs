@@ -17,7 +17,7 @@ use crate::cedar_authorizer::entitybuilder::PartialValue;
 use crate::cedar_authorizer::kube_invariants::{self};
 use crate::cedar_authorizer::kube_invariants::{ActionCapability, DetailedDecision};
 use crate::cedar_authorizer::symcc;
-use crate::k8s_authorizer::StarWildcardStringSelector;
+use crate::k8s_authorizer::{StarWildcardStringSelector, UserInfo};
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
     ResourceAttributes, Response, Verb,
@@ -71,62 +71,66 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
         })
     }
 
-    fn construct_principal(&self, attrs: &Attributes) -> Result<BuiltEntity, AuthorizerError> {
-        // If the principal is any, it must match any user and use partial evaluation.
-        if attrs.user.is_any_principal() {
-            return Ok(EntityBuilder::new().build(PRINCIPAL_UNAUTHENTICATEDUSER.name.name()));
-        }
-
-        let mut entity_builder: EntityBuilder = EntityBuilder::new()
-            .with_attr("username", attrs.user.name.to_smolstr())
-            .with_attr(
-                "groups",
-                attrs
-                    .user
-                    .groups
-                    .iter()
-                    .map(|s| s.to_smolstr())
-                    .collect::<HashSet<_>>(),
-            )
-            .with_attr("uid", attrs.user.uid.as_ref())
-            .with_attr("extra", attrs.user.extra.clone());
-
-        let mut principal_type = PRINCIPAL_USER.name.name();
-
-        if let Some(sa_nsname_str) = attrs.user.name.strip_prefix("system:serviceaccount:") {
-            let parts: Vec<&str> = sa_nsname_str.split(':').collect();
-            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-                return Err(AuthorizerError::InvalidPrincipal(
-                    attrs.user.name.clone(),
-                    "expected format: 'system:serviceaccount:<namespace>:<name>'".to_string(),
-                ));
-            }
-
-            entity_builder.add_attr("serviceAccountNamespace", parts[0]);
-            entity_builder.add_attr("serviceAccountName", parts[1]);
-
-            principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
-        } else if let Some(nodename) = attrs.user.name.strip_prefix("system:node:") {
-            if nodename.is_empty() {
-                return Err(AuthorizerError::InvalidPrincipal(
-                    attrs.user.name.clone(),
-                    "expected format: 'system:node:<name>'".to_string(),
-                ));
-            }
-            principal_type = PRINCIPAL_NODE.name.name();
-            // TODO: Add some validation here
-            entity_builder.add_attr("nodeName", nodename);
-        }
-
-        Ok(entity_builder.build(principal_type))
-    }
+    fn construct_principal(user: &UserInfo) -> Result<BuiltEntity, AuthorizerError> {
+        // If the principal is any, it must match any user and use partial evaluation. Disregard any existing attributes.
+        if UserInfo::is_any_username(&user.name) {
+             return Ok(EntityBuilder::new().build(PRINCIPAL_UNAUTHENTICATEDUSER.name.name()));
+         }
+        
+        // Build the principal entity without the username attribute; username is added in finish_building_principal.
+         let mut entity_builder: EntityBuilder = EntityBuilder::new()
+             .with_attr("username", user.name.to_smolstr())
+             .with_attr(
+                 "groups",
+                 user
+                 .groups
+                 .iter()
+                 .map(|s| s.to_smolstr())
+                 .collect::<HashSet<_>>(),
+             )
+             .with_attr("uid", user.uid.as_ref())
+             .with_attr("extra", user.extra.clone());
+     
+         let mut principal_type = PRINCIPAL_USER.name.name();
+     
+         if let Some(sa_nsname_str) = user.name.strip_prefix("system:serviceaccount:") {
+             let parts: Vec<&str> = sa_nsname_str.split(':').collect();
+             if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                 return Err(AuthorizerError::InvalidPrincipal(
+                     user.name.clone(),
+                     "expected format: 'system:serviceaccount:<namespace>:<name>'".to_string(),
+                 ));
+             }
+     
+             entity_builder.add_attr("serviceAccountNamespace", parts[0]);
+             entity_builder.add_attr("serviceAccountName", parts[1]);
+     
+             /*if let Some(node_name) = user.extra.get(SERVICEACCOUNT_NODE_NAME_USERINFO_EXTRA_KEY) {
+                 entity_builder.add_attr("nodeName", node_name);
+             }*/
+     
+             principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
+         } else if let Some(nodename) = user.name.strip_prefix("system:node:") {
+             if nodename.is_empty() {
+                 return Err(AuthorizerError::InvalidPrincipal(
+                     user.name.clone(),
+                     "expected format: 'system:node:<name>'".to_string(),
+                 ));
+             }
+             principal_type = PRINCIPAL_NODE.name.name();
+             // TODO: Add some validation here
+             entity_builder.add_attr("nodeName", nodename);
+         }
+     
+         Ok(entity_builder.build(principal_type))
+     }
 
     fn construct_resource(
         &self,
-        attrs: &Attributes,
+        request_type: &RequestType,
         action_capability: &ActionCapability,
     ) -> Result<(BuiltEntity, Option<bool>), AuthorizerError> {
-        match &attrs.request_type {
+        match request_type {
             RequestType::NonResource(nonresource_attrs) => Ok((
                 EntityBuilder::new()
                     .with_attr(
@@ -204,11 +208,6 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                 );
                             }
 
-                            // TODO: Enforce all these invariants early on, instead of here (late).
-                            // In that case, we can guard against ever starting to consider a faulty schema and
-                            // thus failing all authz requests.
-                            let kind = resource_type.annotations.0.get(&"kind".parse().unwrap()).into_iter().flatten().map(|a| a.val.clone()).next().ok_or_else(||AuthorizerError::UnexpectedSchemaShape("schema should have kind annotation registered at GVR resource entity".to_string()))?;
-
                             match &resource_attrs.api_version {
                                 StarWildcardStringSelector::Exact(api_version) => {
                                     let api_group_version: SmolStr =
@@ -226,10 +225,10 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                     // those cannot be supported before the API server is able to enforce conditions for such requests.
                                     // It might also be unintuitive that the precondition on namespace metadata existing, is that the API version is an exact match.
                                     // Given these specific circumstances when this field is available, it is hard to say whether it is more confusing than helpful.
-                                    if let (true, true) = (
-                                        record.attributes.contains_key("namespaceMetadata"),
-                                        action_capability.supports_conditional_decision(),
-                                    ) {
+                                    if 
+                                        record.attributes.contains_key("namespaceMetadata") &&
+                                        action_capability.supports_conditional_decision(resource_attrs)
+                                    {
                                         resource_builder
                                             .add_attr::<&str, PartialValue<&metav1::ObjectMeta>>(
                                                 "namespaceMetadata",
@@ -242,6 +241,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                         action_capability.has_request_object(),
                                     ) {
                                         (true, true) => {
+                                            let kind = get_kind_from_record(&resource_type)?;
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                             .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
                                             let versioned_record =
@@ -249,18 +249,24 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                             let specific_version_attr = versioned_record
                                                 .attributes
                                                 .get(api_version.as_str());
+                                            
                                             resource_builder.add_attr(
                                                 "request",
                                                     RecordBuilderImpl::new()
+                                                    // TODO: Use partialvalue here and unknown/unset instead of this Option<Unknown> style
+                                                    // kind is used here as a reference, before ownership is transferred, thus is vX built before apiVersion and kind fields.
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
-                                                    .with_attr("kind", Some(kind.clone()))
+                                                    // TODO: Enforce all these invariants early on, instead of here (late).
+                                                    // In that case, we can guard against ever starting to consider a faulty schema and
+                                                    // thus failing all authz requests.
+                                                    .with_attr("kind", Some(kind))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
                                                     .with_attr::<&str, PartialValue<&metav1::ObjectMeta>>("metadata", match specific_version_attr {
                                                         Some(_) => PartialValue::Unknown,
                                                         None => PartialValue::Unset,
                                                     })
-                                                    // TODO: Use partialvalue here and unknown/unset instead of this Option<Unknown> style
-                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
+                                                    
                                                 );
                                         }
                                         // For verbs that do not carry request data, make "resource has request" return false.
@@ -274,6 +280,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                         action_capability.has_stored_object(),
                                     ) {
                                         (true, true) => {
+                                            let kind = get_kind_from_record(&resource_type)?;
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                                     .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
                                             let versioned_record =
@@ -281,18 +288,20 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                             let specific_version_attr = versioned_record
                                                 .attributes
                                                 .get(api_version.as_str());
+                                            
 
                                             resource_builder.add_attr(
                                                 "stored",
                                                 RecordBuilderImpl::new()
+                                                    // kind is used here as a reference, before ownership is transferred, thus is vX built before apiVersion and kind fields.
+                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
                                                     .with_attr("apiVersion", Some(api_group_version.clone()))
-                                                    .with_attr("kind", Some(kind.clone()))
+                                                    .with_attr("kind", Some(kind))
                                                     // Only expose the metadata field if there a) the apiVersion is an exact match, and b) the given apiVersion exists in the schema.
                                                     .with_attr::<&str, PartialValue<&metav1::ObjectMeta>>("metadata", match specific_version_attr {
                                                         Some(_) => PartialValue::Unknown,
                                                         None => PartialValue::Unset,
                                                     })
-                                                    .with_attr(api_version.as_str(), specific_version_attr.map(|_| EntityBuilder::build_unknown(format!("{}{}", &crate::util::title_case(api_version), &kind).parse::<Name>().unwrap().qualify_with_name(resource_type_namespace_name.as_ref()))))
                                                 );
                                         }
                                         // For verbs that do not have stored data, make "resource has stored" return false.
@@ -398,19 +407,20 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
             .schema_ref()
             .get_action_capabilities(cedar_ns_name, action);
         // TODO: Unit-test the construct_principal/resource functions.
-        let principal_entity = self.construct_principal(attrs)?;
+        let principal_entity = Self::construct_principal(&attrs.user)?;
         let (resource_entity, namespace_scoped) =
-            self.construct_resource(attrs, &action_capability)?;
+            self.construct_resource(&attrs.request_type, &action_capability)?;
 
         let principal_entity_uid = principal_entity.uid().clone();
         let resource_entity_uid = resource_entity.uid().clone();
-        //let cedar_ns_internalname = cedar_ns_name.as_ref().map(|n| n.as_ref());
+
         let action_entity_uid: ast::EntityUID = match &attrs.request_type {
             RequestType::Resource(_) => format!(r#"k8s::Action::"{action}""#).parse()?,
             RequestType::NonResource(_) => {
                 format!(r#"k8s::nonresource::Action::"{action}""#).parse()?
             }
         };
+
         let code_schema =
             cedar_policy_core::validator::CoreSchema::new(self.policies.schema_ref().as_ref());
         let action_entity = PartialEntity {
@@ -431,7 +441,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
             principal_entity_uid.clone().into(),
             action_entity_uid.clone(),
             resource_entity_uid.clone().into(),
-            None,
+            None, // TODO: Username might be populated here in the future.
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -444,7 +454,11 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
             principal_entities
                 .into_iter()
                 .chain(resource_entities.into_iter())
-                .chain(std::iter::once((action_entity_uid.clone(), action_entity))),
+                .chain(std::iter::once((action_entity_uid.clone(), action_entity)))
+                .map(|(uid, entity)| {
+                    crate::util::debug_entity(&entity);
+                    (uid, entity)
+                }),
             self.policies.schema().as_ref().as_ref(),
         )?;
 
@@ -457,6 +471,13 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
             DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid) => {
                 //println!("conditional decision: {condition}");
 
+                // Conditional Authorization is only supported for resource requests.
+                // Thus, fold any non-resource request residual into NoOpinion.
+                let resource_attrs = match &attrs.request_type {
+                    RequestType::Resource(resource_attrs) => resource_attrs,
+                    RequestType::NonResource(_) => return Ok(DetailedDecision::NoOpinion)
+                };
+
                 // Union all the unknown jsonpaths.
                 let unknown_jsonpaths_to_uid = unknown_jsonpaths_to_uid
                     .into_iter()
@@ -466,49 +487,90 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
 
                 // For conditional authorization to be supported, apiGroup, apiVersion, and resource must be exact matches.
                 // TODO: Should label selector authorization be allowed, even though we don't know the resource type?
-                if let Some((_, api_version, _)) = attrs.supports_conditional_authorization() {
-                    if action_capability.supports_conditional_decision() {
-                        DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
-                    } else if action_capability.supports_selectors() {
-                        let reqenv = cedar_policy::RequestEnv::new(
-                            principal_entity_uid.entity_type().clone().into(),
-                            action_entity_uid.into(),
-                            resource_entity_uid.entity_type().clone().into(),
-                        );
+                // https://github.com/upbound/kubernetes-cedar-authorizer/issues/34
+                if action_capability.supports_conditional_decision(resource_attrs) {
+                    DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
+                } else if action_capability.supports_selectors(resource_attrs) {
+                    let reqenv = cedar_policy::RequestEnv::new(
+                        principal_entity_uid.entity_type().clone().into(),
+                        action_entity_uid.into(),
+                        resource_entity_uid.entity_type().clone().into(),
+                    );
 
-                        match self
-                            .symcc_evaluator
-                            .selector_conditions_are_authorized(
-                                attrs,
-                                &reqenv,
-                                condition,
-                                unknown_jsonpaths_to_uid,
-                                &api_version,
-                                namespace_scoped.unwrap_or(true),
-                            )
-                            .await?
-                        {
-                            // TODO: Fill in these, although we don't know exactly which allow policy fired.
-                            true => {
-                                DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
-                                    "conditional_authorization",
-                                )]))
+                    // Return the conditions as-is to a not-allowed SubjectAccessReview that did not populate the field selectors or label selectors,
+                    // such that the caller can know what their permissions are through e.g. SelfSubjectAccessReview.
+                    // By design, the condition and unknown_jsonpaths_to_uid are only cloned if this might be a possibility.
+                    // If the selectors are both None; then with 99% probability the response will be a Deny, in which the clones need to
+                    // be returned. (The 1% case is for when the condition is a tautology, e.g. "<residual> == <residual>").
+                    /*let conditional_response_contents_if_not_authorized = match &attrs.request_type {
+                        RequestType::Resource(resource_attrs) => {
+                            if resource_attrs.field_selector.is_none() && resource_attrs.label_selector.is_none() {
+                                Some((condition.clone(), unknown_jsonpaths_to_uid.clone()))
+                            } else {
+                                None
                             }
-                            // TODO: Fill in these, although we don't know exactly which deny policy fired; or if it was due to no matching allow rules.
-                            false => {
+                        }
+                        _ => None,
+                    };*/
+
+                    match self
+                        .symcc_evaluator
+                        .selector_conditions_are_authorized(
+                            attrs,
+                            &reqenv,
+                            condition,
+                            unknown_jsonpaths_to_uid,
+                            &resource_attrs.api_version,
+                            namespace_scoped.unwrap_or(true),
+                        )
+                        .await?
+                    {
+                        // TODO: Fill in these, although we don't know exactly which allow policy fired.
+                        // I guess we need an enum of e.g. "All" and "Some"
+                        true => {
+                            DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
+                                "conditional_authorization",
+                            )]))
+                        }
+                        // TODO: Fill in these, although we don't know exactly which deny policy fired; or if it was due to no matching allow rules.
+                        // We would need to split SymCC execution into two parts through the following equalities:
+                        // objectSelected(o) => isAuthorized(o)
+                        // objectSelected(o) => (!(deny1 || deny2 || ...) && (allow1 || allow2 || ...))
+                        // !objectSelected(o) || (!(deny1 || deny2 || ...) && (allow1 || allow2 || ...))
+                        // (!objectSelected(o) || !(deny1 || deny2 || ...)) && (!objectSelected(o) || (allow1 || allow2 || ...))
+                        // (objectSelected(o) => !(deny1 || deny2 || ...)) && (objectSelected(o) => (allow1 || allow2 || ...))
+                        false => {
+                            // Returning the conditional response is sound to do as long as the Cedar authorizer only can return NoOpinion responses
+                            // (as a conditional response is basically a NoOpinion with some extra data). However, some care might need to be taken
+                            // on the Kubernetes side to be able to include the conditions in the SAR reason.
+                            // If Cedar can start returning "actual" Deny responses in the future, then this would need to be changed.
+                            // Most likely, we'd make it valid to return a Deny response with conditions (that are added to the SAR reason).
+                            // In that case, there would need to be three SymCC executions, by splitting isAuthorized(o) into three (not two as above) parts:
+                            // objectSelected(o) => isAuthorized(o)
+                            // objectSelected(o) => (
+                            //   !(deny_shortcircuit1 || deny_shortcircuit2 || ...) &&
+                            //   !(deny_noopinion1 || deny_noopinion2 || ...) &&
+                            //   (allow1 || allow2 || ...)
+                            // )
+                            // (objectSelected(o) => !(deny_shortcircuit1 || deny_shortcircuit2 || ...)) &&
+                            // (objectSelected(o) => !(deny_noopinion1 || deny_noopinion2 || ...)) &&
+                            // (objectSelected(o) => (allow1 || allow2 || ...))
+                            //
+                            // If the first SymCC execution is false => Deny with reason "At least one of deny1_shortcircuit, ..., or denyN_shortcircuit denied the request with short-circuiting"
+                            // If the second SymCC execution is false => NoOpinion with reason "At least one of deny1_noopinion, ..., or denyN_noopinion denied the request"
+                            // If the third SymCC execution is false => NoOpinion with reason "no allow policy matched the request"
+                            // If the third SymCC execution is true => Allow with reason "At least one of allow1, ..., or allowN allowed the request"
+                            // One needs to do some performance benchmarking to see how costly this added precision is.
+                            //
+                            // TODO: Add an end to end test for this.
+                            /*if let Some((condition, unknown_jsonpaths_to_uid)) = conditional_response_contents_if_not_authorized {
+                                DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
+                            } else*/ {
                                 DetailedDecision::Deny(Vec::from([ast::PolicyID::from_string(
                                     "conditional_authorization",
                                 )]))
                             }
                         }
-                    } else {
-                        // For the untyped case, the parts that may be conditional, are actually known, but just kept unknown, as they can have any value.
-                        // Thus, if we get a conditional decision for an untyped request, there is some condition on "any value", which thus must evaluate to false.
-                        // TODO: Rejecting allow rules is easy, but rejecting deny rules for this reason seems dangerous?
-                        // TODO: If the resource is an untyped resource request, it might still need symcc,
-                        // because of the 'resource.resourceCombined like "*/scale"' expressions.
-                        // However, that could also be solved without symcc, by manual traversal for the specific use-case.
-                        DetailedDecision::NoOpinion
                     }
                 } else {
                     DetailedDecision::NoOpinion
@@ -534,7 +596,7 @@ impl<F: symcc::SolverFactory<C> + Send + Sync, C: Solver + Send + Sync> Kubernet
                     .policies
                     .schema_ref()
                     .get_action_capabilities(&K8S_NS, &action_str);
-                if action_capability.supports_selectors() {
+                if action_capability.supports_selectors(resource_attrs) {
                     // Populate the resource attributes from the field selectors, if present.
                     resource_attrs.default_from_selectors()?;
                 } else {
@@ -677,6 +739,10 @@ fn type_to_record(
     }
 }
 
+fn get_kind_from_record(record: &json_schema::EntityType<RawName>) -> Result<SmolStr, AuthorizerError> {
+    record.annotations.0.get(&"kind".parse().unwrap()).into_iter().flatten().map(|a| a.val.clone()).next().ok_or_else(||AuthorizerError::UnexpectedSchemaShape("schema should have kind annotation registered at GVR resource entity".to_string()))
+}
+
 mod test {
 
     #[tokio::test]
@@ -749,14 +815,14 @@ mod test {
     action,
     resource
 ) when {
-(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130" has "labels") &&
-(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130"["labels"]).hasTag("serviceaccounts-allowed") &&
-(meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130"["labels"]).getTag("serviceaccounts-allowed") == "true"
+(meta::V1ObjectMeta::"f7a2f361-4e45-4f5f-9f73-00a35f8e7162" has "labels") &&
+(meta::V1ObjectMeta::"f7a2f361-4e45-4f5f-9f73-00a35f8e7162"["labels"]).hasTag("serviceaccounts-allowed") &&
+(meta::V1ObjectMeta::"f7a2f361-4e45-4f5f-9f73-00a35f8e7162"["labels"]).getTag("serviceaccounts-allowed") == "true"
 };"#, Arc::new(schema.clone())).unwrap(), HashMap::from([
-    ("resource.name".to_string(), r#"meta::UnknownString::"899b04c3-0d65-4375-95d9-b643da26c747""#.parse().unwrap()),
-    ("resource.namespaceMetadata".to_string(), r#"meta::V1ObjectMeta::"85388367-1edd-4bc3-8627-4cb36fa65130""#.parse().unwrap()),
-    ("resource.request.v1".to_string(), r#"core::V1Pod::"20fa9537-3d09-4628-9841-cdc26099bf64""#.parse().unwrap()),
-    ("resource.request.metadata".to_string(), r#"meta::V1ObjectMeta::"f9144f25-4359-4efe-80a2-3b74ed5bc57c""#.parse().unwrap()),
+    ("resource.name".to_string(), r#"meta::UnknownString::"894be946-2420-41af-9902-c6ccb35583a0""#.parse().unwrap()),
+    ("resource.namespaceMetadata".to_string(), r#"meta::V1ObjectMeta::"f7a2f361-4e45-4f5f-9f73-00a35f8e7162""#.parse().unwrap()),
+    ("resource.request.v1".to_string(), r#"core::V1Pod::"c17f9822-22a6-43ed-b424-69af5729c0c9""#.parse().unwrap()),
+    ("resource.request.metadata".to_string(), r#"meta::V1ObjectMeta::"e992f331-9712-4493-a888-92bc4b7d9a2d""#.parse().unwrap()),
 ]))),
             ("serviceaccount cannot create pods in another namespace",
             AttributesBuilder::resource("system:serviceaccount:foo:bar", Verb::Create,
@@ -965,6 +1031,83 @@ mod test {
                         Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
                     ]))
                     .build(), Response::no_opinion()),
+            ("oidc:foo can watch public secrets cluster-wide, except in the supersecret namespace",
+            AttributesBuilder::resource_and_selectors("oidc:foo", Verb::Watch,
+                    StarWildcardStringSelector::Exact("".to_string()),
+                    // TODO: In the future, this _could_ work with any apiVersion, as there is no schema-specific field selector.
+                    // However, this is not yet implemented, as it means that the resource.stored.{apiVersion, and vX} fields
+                    // would need to be unknown (and thus we would need to rewrite resource.stored.apiVersion to UnknownString).
+                    StarWildcardStringSelector::Exact("v1".to_string()),
+                    CombinedResource::ResourceOnly { resource: "secrets".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Any,
+                    Some(vec![
+                        Selector::exists("public-access"),
+                    ]),
+                    Some(vec![
+                        Selector::not_in_values("metadata.namespace", vec!["supersecret".to_string()]),
+                    ]))
+                    .build(), Response::allow()),
+            ("oidc-front-proxy group members can impersonate users with the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::Impersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "users".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("oidc:user-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::allow()),
+            ("oidc-front-proxy group members cannot impersonate users without the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::Impersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "users".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("user-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::no_opinion()),
+            ("oidc-front-proxy group members cannot impersonate groups with the oidc: prefix, as it is not known whether the user also has the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::Impersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "groups".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("oidc:group-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::no_opinion()),
+            ("oidc-front-proxy group members can constrained impersonate users with the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::ConstrainedImpersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "users".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("oidc:user-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::allow()),
+            ("oidc-front-proxy group members cannot constrained impersonate users without the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::ConstrainedImpersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "users".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("user-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::no_opinion()),
+            ("oidc-front-proxy group members can constrained impersonate groups with the oidc: prefix, when the impersonated user also has the oidc: prefix",
+            AttributesBuilder::resource("anything", Verb::ConstrainedImpersonate,
+                    StarWildcardStringSelector::Exact("authentication.k8s.io".to_string()),
+                    StarWildcardStringSelector::Any,
+                    CombinedResource::ResourceOnly { resource: "groups".to_string() },
+                    EmptyWildcardStringSelector::Any,
+                    EmptyWildcardStringSelector::Exact("oidc:group-1".to_string()))
+                    .with_group("oidc-front-proxy")
+                    .build(), Response::conditional(kube_invariants::PolicySet::from_str(r#"permit(
+    principal,
+    action,
+    resource
+) when {
+  ((context["impersonatedPrincipal"])["username"]) like "oidc:*"
+};"#, Arc::new(schema.clone())).unwrap(), HashMap::new())),
         ];
 
         for (description, attrs, expected_resp) in test_cases {

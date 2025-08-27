@@ -29,6 +29,14 @@ impl Selector {
     }
 
     #[cfg(test)]
+    pub fn exists(key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            op: SelectorPredicate::Exists,
+        }
+    }
+
+    #[cfg(test)]
     pub fn in_values(key: &str, values: impl IntoIterator<Item = String>) -> Self {
         Self {
             key: key.to_string(),

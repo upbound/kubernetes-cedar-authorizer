@@ -13,6 +13,10 @@ namespace k8s {
     "groups": Set<__cedar::String>,
     "serviceAccountNamespace": __cedar::String,
     "serviceAccountName": __cedar::String,
+    // TODO: Maybe add this as a convenience function, unless it complicates analysis too much
+    // Most likely, we could keep this field as syntactic sugar, and actually translate it to the
+    // equivalent of hasTag / getTag expressions when analyzing and interpreting the policy.
+    // "nodeName"?: __cedar::String,
     "uid"?: __cedar::String,
     "username": __cedar::String
   };
@@ -64,9 +68,33 @@ namespace k8s {
     context: {}
   };
 
+  action "impersonate" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node], // Should unauthenticated users & nodes ever be allowed to impersonate?
+    resource: [k8s::Resource,io::k8s::authentication::users, io::k8s::authentication::serviceaccounts, io::k8s::authentication::groups, io::k8s::authentication::uids, io::k8s::authentication::userextras],
+    context: {}
+  };
+
+  action "constrainedimpersonate" in ["*"] appliesTo {
+    principal: [k8s::User, k8s::ServiceAccount, k8s::Node], // Should unauthenticated users & nodes ever be allowed to impersonate?
+    resource: [k8s::Resource,io::k8s::authentication::users, io::k8s::authentication::nodes, io::k8s::authentication::serviceaccounts, io::k8s::authentication::groups, io::k8s::authentication::uids, io::k8s::authentication::userextras],
+    context: {
+      "impersonatedPrincipal": {
+        // Other UserInfo fields than username. Predicates on these are returned in the condition.
+        "username": __cedar::String,
+        // TODO: Rewrite the schema such that the type for groups is UnknownStringSet,
+        // and the type for username and uid is UnknownString, such that they can be left unknown.
+        "groups"?: Set<__cedar::String>,
+        "uid"?: __cedar::String,
+        "extra"?: meta::StringToStringMap,
+      },
+      "impersonatedAction": __cedar::String,
+      "impersonatedResource": k8s::Resource
+    }
+  };
+
   action "*" appliesTo {
     principal: [k8s::User, k8s::ServiceAccount, k8s::Node, k8s::UnauthenticatedUser],
-    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets],
+    resource: [k8s::Resource, core::pods, core::pods_status, core::nodes, core::secrets, io::k8s::authentication::users, io::k8s::authentication::nodes, io::k8s::authentication::serviceaccounts, io::k8s::authentication::groups, io::k8s::authentication::uids, io::k8s::authentication::userextras],
     context: {}
   };
 }
@@ -116,6 +144,8 @@ namespace core {
     "name": __cedar::String,
     "namespace": __cedar::String,
     "namespaceMetadata"?: meta::V1ObjectMeta,
+    // TODO: Report the bug upstream to the VS Code Cedar plugin that autocompletion breaks when
+    // the entity type here is not fully-qualified.
     "request"?: core::VersionedPod,
     "stored"?: core::VersionedPod
   };
@@ -178,10 +208,49 @@ namespace core {
   };
 }
 
+@apiGroup("authentication.k8s.io")
+namespace io::k8s::authentication {
+  entity users = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "users"
+    "name": __cedar::String,              // full username
+  };
+  entity nodes = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "nodes"
+    "name": __cedar::String,              // node name (system:node: prefix stripped)
+  };
+  entity serviceaccounts = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "serviceaccounts"
+    "name": __cedar::String,              // serviceaccount name (system:serviceaccount: prefix stripped)
+    "namespace": __cedar::String,         // serviceaccount namespace
+  };
+
+  entity groups = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "groups"
+    "name": __cedar::String,              // group name
+  };
+  entity uids = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "uids"
+    "name": __cedar::String,              // uid
+  };
+  entity userextras = {
+    "apiGroup": __cedar::String,          // always "authentication.k8s.io"
+    "resourceCombined": __cedar::String,  // always "userextras/<extra key>"
+    "name": __cedar::String,              // extra value
+  };
+}
+
 namespace meta {
 
   entity UnknownString = {
     "value": __cedar::String,
+  };
+  entity UnknownStringSet = {
+    "value": Set<__cedar::String>
   };
 
   entity StringToStringMap = {

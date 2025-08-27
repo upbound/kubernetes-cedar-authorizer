@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
 use std::str::FromStr;
 
+// TODO: Encode as Attributes<T> where T is the type of the attributes, and then use a trait to implement the methods for the different types?
 pub struct Attributes {
     // user returns the user.Info object to authorize
     // if impersonation has taken place, this represents the impersonated user
@@ -27,6 +28,7 @@ pub struct NonResourceAttributes {
 }
 
 // TODO: Add the "post", "put", etc. nonresource verbs
+// Should these be split between resource and non-resource verbs?
 #[derive(Clone, PartialEq)]
 pub enum Verb {
     Any,
@@ -39,6 +41,8 @@ pub enum Verb {
     Delete,
     DeleteCollection,
     Connect,
+    Impersonate,
+    ConstrainedImpersonate,
     Custom(String),
 }
 
@@ -55,6 +59,8 @@ impl Display for Verb {
             Verb::Delete => "delete",
             Verb::DeleteCollection => "deletecollection",
             Verb::Connect => "connect",
+            Verb::Impersonate => "impersonate",
+            Verb::ConstrainedImpersonate => "constrainedimpersonate",
             Verb::Custom(v) => v,
         })
     }
@@ -92,6 +98,8 @@ impl FromStr for Verb {
             "delete" => Verb::Delete,
             "deletecollection" => Verb::DeleteCollection,
             "connect" => Verb::Connect,
+            "impersonate" => Verb::Impersonate,
+            "constrainedimpersonate" => Verb::ConstrainedImpersonate,
             _ => Verb::Custom(s.to_ascii_lowercase()),
         })
     }
@@ -100,10 +108,10 @@ impl FromStr for Verb {
 impl Verb {
     // When is_read_only == true, the request has no side effects, other than
     // caching, logging, and other incidentals.
-    pub fn is_read_only(&self) -> bool {
+    /*pub fn is_read_only(&self) -> bool {
         // As per Kubernetes upstream impl.
         matches!(self, Verb::Get | Verb::List | Verb::Watch)
-    }
+    }*/
 }
 
 #[derive(PartialEq)]
@@ -136,6 +144,12 @@ impl Display for StarWildcardStringSelector {
             Self::Any => f.write_str("*"),
             Self::Exact(s) => f.write_str(s),
         }
+    }
+}
+
+impl StarWildcardStringSelector {
+    pub fn is_exact(&self) -> bool {
+        matches!(self, StarWildcardStringSelector::Exact(_))
     }
 }
 
@@ -317,6 +331,17 @@ pub struct ResourceAttributes {
 }
 
 impl ResourceAttributes {
+    pub fn is_typed_resource(&self) -> bool {
+        match (&self.api_group, &self.resource) {
+            (
+                StarWildcardStringSelector::Exact(_),
+                CombinedResource::ResourceOnly { .. }
+                | CombinedResource::ResourceSubresource { .. },
+            ) => true,
+            _ => false,
+        }
+    }
+
     // TODO: Should we validate to only allow only field selectors for specific verbs?
     // TODO: The more generic solution here is to allow multiple values for a field selector,
     // get a residual, and use the SAT/SMT/symbolic compiler method to make sure that all possible values
@@ -407,8 +432,12 @@ pub struct UserInfo {
 }
 
 impl UserInfo {
-    // TODO: Logical AND or OR here?
-    pub fn is_any_principal(&self) -> bool {
-        self.name == "system:anonymous" || self.groups.contains("system:unauthenticated")
+    // TODO: Also check for system:unauthenticated group?
+    /*pub fn is_any_principal(&self) -> bool {
+        Self::is_any_username(&self.name)
+    }*/
+
+    pub fn is_any_username(username: &str) -> bool {
+        username == "system:anonymous"
     }
 }
