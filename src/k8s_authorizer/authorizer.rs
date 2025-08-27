@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
-use crate::k8s_authorizer::{
-    CombinedResource, NonResourceAttributes, RequestType, StarWildcardStringSelector,
-};
+use crate::k8s_authorizer::{NonResourceAttributes, RequestType, StarWildcardStringSelector};
 
 use super::err::ParseError;
 use crate::cedar_authorizer::kube_invariants;

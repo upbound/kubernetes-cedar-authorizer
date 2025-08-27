@@ -1,16 +1,12 @@
 use std::{
-    collections::{HashMap},
+    collections::HashMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use cedar_policy_core::{
     ast::{self, Expr, ExprKind},
-    tpe::{
-        entities::PartialEntities,
-        request::PartialRequest,
-        residual::Residual,
-    },
+    tpe::{entities::PartialEntities, request::PartialRequest, residual::Residual},
 };
 
 use super::{
@@ -306,7 +302,6 @@ struct PartialEntityWithDebug {
     ancestors: Option<HashSet<ast::EntityUID>>,
     tags: Option<BTreeMap<SmolStr, ast::Value>>,
 }*/
-
 
 mod test {
     #[test]

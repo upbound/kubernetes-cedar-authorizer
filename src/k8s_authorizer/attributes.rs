@@ -332,14 +332,14 @@ pub struct ResourceAttributes {
 
 impl ResourceAttributes {
     pub fn is_typed_resource(&self) -> bool {
-        match (&self.api_group, &self.resource) {
+        matches!(
+            (&self.api_group, &self.resource),
             (
                 StarWildcardStringSelector::Exact(_),
                 CombinedResource::ResourceOnly { .. }
-                | CombinedResource::ResourceSubresource { .. },
-            ) => true,
-            _ => false,
-        }
+                    | CombinedResource::ResourceSubresource { .. }
+            )
+        )
     }
 
     // TODO: Should we validate to only allow only field selectors for specific verbs?

@@ -17,12 +17,12 @@ use crate::cedar_authorizer::entitybuilder::PartialValue;
 use crate::cedar_authorizer::kube_invariants::{self};
 use crate::cedar_authorizer::kube_invariants::{ActionCapability, DetailedDecision};
 use crate::cedar_authorizer::symcc;
-use crate::k8s_authorizer::{StarWildcardStringSelector, UserInfo};
 use crate::k8s_authorizer::{
     Attributes, AuthorizerError, EmptyWildcardStringSelector, KubernetesAuthorizer, Reason,
     ResourceAttributes, Response, Verb,
 };
 use crate::k8s_authorizer::{CombinedResource, RequestType};
+use crate::k8s_authorizer::{StarWildcardStringSelector, UserInfo};
 use crate::schema::core::{
     K8S_NONRESOURCE_NS, K8S_NS, PRINCIPAL_NODE, PRINCIPAL_SERVICEACCOUNT,
     PRINCIPAL_UNAUTHENTICATEDUSER, PRINCIPAL_USER, RESOURCE_NONRESOURCEURL, RESOURCE_RESOURCE,
@@ -74,56 +74,55 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
     fn construct_principal(user: &UserInfo) -> Result<BuiltEntity, AuthorizerError> {
         // If the principal is any, it must match any user and use partial evaluation. Disregard any existing attributes.
         if UserInfo::is_any_username(&user.name) {
-             return Ok(EntityBuilder::new().build(PRINCIPAL_UNAUTHENTICATEDUSER.name.name()));
-         }
-        
+            return Ok(EntityBuilder::new().build(PRINCIPAL_UNAUTHENTICATEDUSER.name.name()));
+        }
+
         // Build the principal entity without the username attribute; username is added in finish_building_principal.
-         let mut entity_builder: EntityBuilder = EntityBuilder::new()
-             .with_attr("username", user.name.to_smolstr())
-             .with_attr(
-                 "groups",
-                 user
-                 .groups
-                 .iter()
-                 .map(|s| s.to_smolstr())
-                 .collect::<HashSet<_>>(),
-             )
-             .with_attr("uid", user.uid.as_ref())
-             .with_attr("extra", user.extra.clone());
-     
-         let mut principal_type = PRINCIPAL_USER.name.name();
-     
-         if let Some(sa_nsname_str) = user.name.strip_prefix("system:serviceaccount:") {
-             let parts: Vec<&str> = sa_nsname_str.split(':').collect();
-             if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-                 return Err(AuthorizerError::InvalidPrincipal(
-                     user.name.clone(),
-                     "expected format: 'system:serviceaccount:<namespace>:<name>'".to_string(),
-                 ));
-             }
-     
-             entity_builder.add_attr("serviceAccountNamespace", parts[0]);
-             entity_builder.add_attr("serviceAccountName", parts[1]);
-     
-             /*if let Some(node_name) = user.extra.get(SERVICEACCOUNT_NODE_NAME_USERINFO_EXTRA_KEY) {
-                 entity_builder.add_attr("nodeName", node_name);
-             }*/
-     
-             principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
-         } else if let Some(nodename) = user.name.strip_prefix("system:node:") {
-             if nodename.is_empty() {
-                 return Err(AuthorizerError::InvalidPrincipal(
-                     user.name.clone(),
-                     "expected format: 'system:node:<name>'".to_string(),
-                 ));
-             }
-             principal_type = PRINCIPAL_NODE.name.name();
-             // TODO: Add some validation here
-             entity_builder.add_attr("nodeName", nodename);
-         }
-     
-         Ok(entity_builder.build(principal_type))
-     }
+        let mut entity_builder: EntityBuilder = EntityBuilder::new()
+            .with_attr("username", user.name.to_smolstr())
+            .with_attr(
+                "groups",
+                user.groups
+                    .iter()
+                    .map(|s| s.to_smolstr())
+                    .collect::<HashSet<_>>(),
+            )
+            .with_attr("uid", user.uid.as_ref())
+            .with_attr("extra", user.extra.clone());
+
+        let mut principal_type = PRINCIPAL_USER.name.name();
+
+        if let Some(sa_nsname_str) = user.name.strip_prefix("system:serviceaccount:") {
+            let parts: Vec<&str> = sa_nsname_str.split(':').collect();
+            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                return Err(AuthorizerError::InvalidPrincipal(
+                    user.name.clone(),
+                    "expected format: 'system:serviceaccount:<namespace>:<name>'".to_string(),
+                ));
+            }
+
+            entity_builder.add_attr("serviceAccountNamespace", parts[0]);
+            entity_builder.add_attr("serviceAccountName", parts[1]);
+
+            /*if let Some(node_name) = user.extra.get(SERVICEACCOUNT_NODE_NAME_USERINFO_EXTRA_KEY) {
+                entity_builder.add_attr("nodeName", node_name);
+            }*/
+
+            principal_type = PRINCIPAL_SERVICEACCOUNT.name.name();
+        } else if let Some(nodename) = user.name.strip_prefix("system:node:") {
+            if nodename.is_empty() {
+                return Err(AuthorizerError::InvalidPrincipal(
+                    user.name.clone(),
+                    "expected format: 'system:node:<name>'".to_string(),
+                ));
+            }
+            principal_type = PRINCIPAL_NODE.name.name();
+            // TODO: Add some validation here
+            entity_builder.add_attr("nodeName", nodename);
+        }
+
+        Ok(entity_builder.build(principal_type))
+    }
 
     fn construct_resource(
         &self,
@@ -225,9 +224,9 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                     // those cannot be supported before the API server is able to enforce conditions for such requests.
                                     // It might also be unintuitive that the precondition on namespace metadata existing, is that the API version is an exact match.
                                     // Given these specific circumstances when this field is available, it is hard to say whether it is more confusing than helpful.
-                                    if 
-                                        record.attributes.contains_key("namespaceMetadata") &&
-                                        action_capability.supports_conditional_decision(resource_attrs)
+                                    if record.attributes.contains_key("namespaceMetadata")
+                                        && action_capability
+                                            .supports_conditional_decision(resource_attrs)
                                     {
                                         resource_builder
                                             .add_attr::<&str, PartialValue<&metav1::ObjectMeta>>(
@@ -241,7 +240,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                         action_capability.has_request_object(),
                                     ) {
                                         (true, true) => {
-                                            let kind = get_kind_from_record(&resource_type)?;
+                                            let kind = get_kind_from_record(resource_type)?;
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                             .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
                                             let versioned_record =
@@ -249,7 +248,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                             let specific_version_attr = versioned_record
                                                 .attributes
                                                 .get(api_version.as_str());
-                                            
+
                                             resource_builder.add_attr(
                                                 "request",
                                                     RecordBuilderImpl::new()
@@ -266,7 +265,6 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                                         Some(_) => PartialValue::Unknown,
                                                         None => PartialValue::Unset,
                                                     })
-                                                    
                                                 );
                                         }
                                         // For verbs that do not carry request data, make "resource has request" return false.
@@ -280,7 +278,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                         action_capability.has_stored_object(),
                                     ) {
                                         (true, true) => {
-                                            let kind = get_kind_from_record(&resource_type)?;
+                                            let kind = get_kind_from_record(resource_type)?;
                                             let versioned_record = resource_type_namespace.common_types.get(&CommonTypeId::new(format!("Versioned{kind}").parse::<UnreservedId>().unwrap()).unwrap())
                                                     .ok_or_else(|| AuthorizerError::UnexpectedSchemaShape("schema should have common type registered at GVR resource entity".to_string()))?;
                                             let versioned_record =
@@ -288,7 +286,6 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                                             let specific_version_attr = versioned_record
                                                 .attributes
                                                 .get(api_version.as_str());
-                                            
 
                                             resource_builder.add_attr(
                                                 "stored",
@@ -475,7 +472,7 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                 // Thus, fold any non-resource request residual into NoOpinion.
                 let resource_attrs = match &attrs.request_type {
                     RequestType::Resource(resource_attrs) => resource_attrs,
-                    RequestType::NonResource(_) => return Ok(DetailedDecision::NoOpinion)
+                    RequestType::NonResource(_) => return Ok(DetailedDecision::NoOpinion),
                 };
 
                 // Union all the unknown jsonpaths.
@@ -527,11 +524,9 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                     {
                         // TODO: Fill in these, although we don't know exactly which allow policy fired.
                         // I guess we need an enum of e.g. "All" and "Some"
-                        true => {
-                            DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
-                                "conditional_authorization",
-                            )]))
-                        }
+                        true => DetailedDecision::Allow(Vec::from([ast::PolicyID::from_string(
+                            "conditional_authorization",
+                        )])),
                         // TODO: Fill in these, although we don't know exactly which deny policy fired; or if it was due to no matching allow rules.
                         // We would need to split SymCC execution into two parts through the following equalities:
                         // objectSelected(o) => isAuthorized(o)
@@ -565,7 +560,8 @@ impl<F: symcc::SolverFactory<C>, C: Solver> CedarKubeAuthorizer<F, C> {
                             // TODO: Add an end to end test for this.
                             /*if let Some((condition, unknown_jsonpaths_to_uid)) = conditional_response_contents_if_not_authorized {
                                 DetailedDecision::Conditional(condition, unknown_jsonpaths_to_uid)
-                            } else*/ {
+                            } else*/
+                            {
                                 DetailedDecision::Deny(Vec::from([ast::PolicyID::from_string(
                                     "conditional_authorization",
                                 )]))
@@ -739,8 +735,22 @@ fn type_to_record(
     }
 }
 
-fn get_kind_from_record(record: &json_schema::EntityType<RawName>) -> Result<SmolStr, AuthorizerError> {
-    record.annotations.0.get(&"kind".parse().unwrap()).into_iter().flatten().map(|a| a.val.clone()).next().ok_or_else(||AuthorizerError::UnexpectedSchemaShape("schema should have kind annotation registered at GVR resource entity".to_string()))
+fn get_kind_from_record(
+    record: &json_schema::EntityType<RawName>,
+) -> Result<SmolStr, AuthorizerError> {
+    record
+        .annotations
+        .0
+        .get(&"kind".parse().unwrap())
+        .into_iter()
+        .flatten()
+        .map(|a| a.val.clone())
+        .next()
+        .ok_or_else(|| {
+            AuthorizerError::UnexpectedSchemaShape(
+                "schema should have kind annotation registered at GVR resource entity".to_string(),
+            )
+        })
 }
 
 mod test {

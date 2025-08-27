@@ -2,7 +2,9 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crate::{
     cedar_authorizer::kube_invariants,
-    k8s_authorizer::{self, Attributes, RequestType, StarWildcardStringSelector, SymbolicEvaluationError},
+    k8s_authorizer::{
+        self, Attributes, RequestType, StarWildcardStringSelector, SymbolicEvaluationError,
+    },
 };
 use cedar_policy_core::{ast, expr_builder::ExprBuilder};
 use cedar_policy_symcc::{err::SolverError, solver::Solver, CedarSymCompiler};
@@ -17,7 +19,13 @@ pub enum SolverFactoryError {
     #[error(transparent)]
     SolverError(#[from] SolverError),
     #[error(transparent)]
-    ParserError(#[from] cedar_policy_symcc::err::Error),
+    ParserError(Box<cedar_policy_symcc::err::Error>),
+}
+
+impl From<cedar_policy_symcc::err::Error> for SolverFactoryError {
+    fn from(error: cedar_policy_symcc::err::Error) -> Self {
+        SolverFactoryError::ParserError(Box::new(error))
+    }
 }
 
 pub trait SolverFactory<S: Solver> {
@@ -381,13 +389,12 @@ impl WithExprBuilder for ast::Expr<()> {
 }
 
 mod test {
-    
 
     #[test]
     fn test_field_selector_to_expr() {
         use crate::k8s_authorizer;
-        use std::collections::{HashMap, HashSet};
         use crate::k8s_authorizer::StarWildcardStringSelector;
+        use std::collections::{HashMap, HashSet};
         let tests = vec![
             (
                 "None if metadata.name is not referenced in is_authorized",

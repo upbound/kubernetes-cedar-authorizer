@@ -11,7 +11,10 @@ use cedar_policy_core::{
 use cedar_policy_core::ast::{InternalName, Name, UnreservedId};
 use cedar_policy_core::validator::json_schema::{self, EntityTypeKind, Fragment};
 
-use crate::{k8s_authorizer::ResourceAttributes, schema::core::{K8S_NONRESOURCE_NS, K8S_NS}};
+use crate::{
+    k8s_authorizer::ResourceAttributes,
+    schema::core::{K8S_NONRESOURCE_NS, K8S_NS},
+};
 
 use super::err::SchemaError;
 
@@ -37,11 +40,7 @@ static STATIC_RESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
     });
 
 static STATIC_NONRESOURCE_ATTRIBUTE_REWRITES: LazyLock<HashMap<String, RawName>> =
-    LazyLock::new(|| {
-        HashMap::from([
-            ("path".to_string(), "meta::UnknownString".parse().unwrap()),
-        ])
-    });
+    LazyLock::new(|| HashMap::from([("path".to_string(), "meta::UnknownString".parse().unwrap())]));
 
 #[derive(Clone)]
 pub struct Schema {
@@ -173,7 +172,8 @@ impl Schema {
             .collect();
 
         for type_internalname in type_names {
-            let resource_type_ns = match schema.0.get_mut(&ns_of_internal_name(&type_internalname)) {
+            let resource_type_ns = match schema.0.get_mut(&ns_of_internal_name(&type_internalname))
+            {
                 Some(ns) => ns,
                 None => {
                     return Err(SchemaError::SchemaRewriteError(format!(
@@ -185,7 +185,11 @@ impl Schema {
             let id = UnreservedId::try_from(type_internalname.basename().clone()).unwrap();
             let entity_type = match resource_type_ns.entity_types.get_mut(&id) {
                 Some(resource_type) => resource_type,
-                None => return Err(SchemaError::MissingResourceType(type_internalname.to_string())),
+                None => {
+                    return Err(SchemaError::MissingResourceType(
+                        type_internalname.to_string(),
+                    ))
+                }
             };
             match &mut entity_type.kind {
                 EntityTypeKind::Standard(json_schema::StandardEntityType {
@@ -230,22 +234,18 @@ impl Schema {
     ///
     /// However, the rewrite is only applied to the special case expression "resource.foo" is rewritten to "resource.foo.value", when
     /// "foo" is in the substitutions set.
+    #[allow(clippy::only_used_in_recursion)] // TODO: Should be dependent on the actual rewrites, instead of using a static set.
     pub fn rewrite_expr(&self, expr: &Expr) -> Expr {
         match expr.expr_kind() {
-            ExprKind::And { left, right } => Expr::and(
-                self.rewrite_expr(left),
-                self.rewrite_expr(right),
-            ),
-            ExprKind::BinaryApp { op, arg1, arg2 } => Expr::binary_app(
-                *op,
-                self.rewrite_expr(arg1),
-                self.rewrite_expr(arg2),
-            ),
+            ExprKind::And { left, right } => {
+                Expr::and(self.rewrite_expr(left), self.rewrite_expr(right))
+            }
+            ExprKind::BinaryApp { op, arg1, arg2 } => {
+                Expr::binary_app(*op, self.rewrite_expr(arg1), self.rewrite_expr(arg2))
+            }
             ExprKind::ExtensionFunctionApp { fn_name, args } => Expr::call_extension_fn(
                 fn_name.clone(),
-                args.iter()
-                    .map(|a| self.rewrite_expr(a))
-                    .collect(),
+                args.iter().map(|a| self.rewrite_expr(a)).collect(),
             ),
             // TODO: This could become quite a lot more generic, now it's only for principal and resource attributes.
             ExprKind::GetAttr {
@@ -253,6 +253,7 @@ impl Schema {
                 attr,
             } => {
                 if matches!(get_expr.expr_kind(), ExprKind::Var(Var::Resource)) {
+                    // TODO: To make this "actually" work, we'd need to know what the type of the resource is/can be here.
                     if STATIC_RESOURCE_ATTRIBUTE_REWRITES.contains_key(attr.as_str()) {
                         return Expr::get_attr(expr.clone(), "value".into());
                     }
@@ -260,15 +261,11 @@ impl Schema {
                         return Expr::get_attr(expr.clone(), "value".into());
                     }
                 }
-                Expr::get_attr(
-                    self.rewrite_expr(get_expr),
-                    attr.clone(),
-                )
+                Expr::get_attr(self.rewrite_expr(get_expr), attr.clone())
             }
-            ExprKind::HasAttr { expr, attr } => Expr::has_attr(
-                self.rewrite_expr(expr),
-                attr.clone(),
-            ),
+            ExprKind::HasAttr { expr, attr } => {
+                Expr::has_attr(self.rewrite_expr(expr), attr.clone())
+            }
 
             ExprKind::If {
                 test_expr,
@@ -279,33 +276,20 @@ impl Schema {
                 self.rewrite_expr(then_expr),
                 self.rewrite_expr(else_expr),
             ),
-            ExprKind::Is { expr, entity_type } => Expr::is_entity_type(
-                self.rewrite_expr(expr),
-                entity_type.clone(),
-            ),
-            ExprKind::Like { expr, pattern } => Expr::like(
-                self.rewrite_expr(expr),
-                pattern.clone(),
-            ),
-            ExprKind::Or { left, right } => Expr::or(
-                self.rewrite_expr(left),
-                self.rewrite_expr(right),
-            ),
-            ExprKind::Record(attrs) => Expr::record(attrs.iter().map(|(k, v)| {
-                (
-                    k.clone(),
-                    self.rewrite_expr(v),
-                )
-            }))
-            .unwrap(),
-            ExprKind::Set(items) => Expr::set(
-                items
-                    .iter()
-                    .map(|e| self.rewrite_expr(e)),
-            ),
-            ExprKind::UnaryApp { op, arg } => {
-                Expr::unary_app(*op, self.rewrite_expr(arg))
+            ExprKind::Is { expr, entity_type } => {
+                Expr::is_entity_type(self.rewrite_expr(expr), entity_type.clone())
             }
+            ExprKind::Like { expr, pattern } => {
+                Expr::like(self.rewrite_expr(expr), pattern.clone())
+            }
+            ExprKind::Or { left, right } => {
+                Expr::or(self.rewrite_expr(left), self.rewrite_expr(right))
+            }
+            ExprKind::Record(attrs) => {
+                Expr::record(attrs.iter().map(|(k, v)| (k.clone(), self.rewrite_expr(v)))).unwrap()
+            }
+            ExprKind::Set(items) => Expr::set(items.iter().map(|e| self.rewrite_expr(e))),
+            ExprKind::UnaryApp { op, arg } => Expr::unary_app(*op, self.rewrite_expr(arg)),
             ExprKind::Var(var) => Expr::var(*var),
             ExprKind::Lit(lit) => Expr::val(lit.clone()),
             ExprKind::Slot(slot_id) => Expr::slot(*slot_id),
