@@ -322,6 +322,13 @@ permit(
 };
 ```
 
+`resource is core::pods` if and only if
+`resource.apiGroup == "" && resource.resourceCombined == "pods"`, and thus they
+can be used interchangeably. However, as we will see later in the conditional
+authorization section, `is` usage is preferred, as it lets Cedar know the
+specific attributes that can be accessed, and their types, respectively. This
+allows expressing conditions against e.g. the request object.
+
 ### Expressing wildcards and the `cluster-admin` Role
 
 Recall that all basic resource fields (`apiGroup`, `resourceCombined`,
@@ -529,7 +536,19 @@ So far, we've demonstrated Cedar policies that have a Kubernetes RBAC
 equivalent. Next, we'll proceed into policy types that are not natively
 supported by RBAC, or hard to achieve.
 
-We'll group 
+We'll group the new features/expressiveness into four buckets:
+
+1. (This section) New expressiveness unlocked "just" by using a general-purpose
+  authorization language, without changing Kubernetes.
+1. How Kubernetes could be extended to support uniformly writing policies across
+  authorization and admission. This is the base for the Conditional
+  Authorization KEP to be written as a result of this PoC.
+1. How the Conditional Authorization KEP to be written as part of this project
+  actually can reimplement, and extend the features and functionality of the
+  [Constrained Impersonation KEP](https://github.com/kubernetes/enhancements/tree/master/keps/sig-auth/5284-constrained-impersonation).
+1. What a uniform user experience for the already-implemented
+  [Authorize with Selectors KEP](https://github.com/kubernetes/enhancements/tree/master/keps/sig-auth/4601-authorize-with-selectors)
+  could look like.
 
 ### Using principal UID or "extra" information
 
@@ -852,30 +871,289 @@ permit(
 In this example, only one policy is used, instead of separate ones for create
 (which only has a request object), update/patch (which have both a request and
 stored object), and delete (which only has a stored object), but one could also
-create three individual policies, if one wants to avoid the `if` statement. In
-this case, `storageClassName` must be set to development, it cannot be left
-empty/null (as allowed by the schema).
+create three individual policies, if one wants to avoid the `if` statement. Even
+though in theory the storageClassName could also be left unset, this example
+policy forces it to be set to development.
 
-- Restricting a subresource write
-- Restricting a connect request
-- Restrict name on a create
-- Targeting namespaced data for writes
-- Conditional authorization vs compound authorization
+Let's follow what will happen when this policy is evaluated. Consider this `SubjectAccessReview`:
+
+```yaml
+apiVersion: authorization.k8s.io/v1
+kind: SubjectAccessReview
+spec:
+  user: charlie
+  groups:
+  - engineers
+  - team-1
+  - team-2
+  resourceAttributes:
+    verb: update
+    group: ""
+    version: v1
+    resource: persistentvolumeclaims
+    namespace: team-1
+    name: test-data
+```
+
+Cedar will _partially evaluate_ the policies in the light of this request
+metadata from the `SubjectAccessReview`. In this case, the new and old objects,
+represented as `resource.request.v1` and `resource.stored.v1` respectively are
+_unknown_. However, all data that is known (from the `SubjectAccessReview`) is
+simplified, yielding the following expression:
+
+```cedar
+resource.request.v1 has spec &&
+resource.request.v1.spec has storageClassName &&
+resource.request.v1.spec.storageClassName == "development" &&
+resource.stored.v1 has spec &&
+resource.stored.v1.spec has storageClassName &&
+resource.stored.v1.spec.storageClassName == "development"
+```
+
+Note that because it was an `update` operation, it was known that
+`resource has request` == true, and `resource has stored` == true, and thus
+could the if statement be simplified. For clarity, the `has` syntax is fully
+expanded here, showing every part of the evaluation separately. When this
+expression is translated into CEL, for enforcement in the API server, it
+becomes:
+
+```cel
+has(object.spec) &&
+has(object.spec.storageClassName) &&
+object.spec.storageClassName == "development" && 
+has(oldObject.spec) &&
+has(oldObject.spec.storageClassName) &&
+oldObject.spec.storageClassName == "development"
+```
+
+If the same principal `charlie` would execute the same request (e.g.
+`kubectl edit persistentvolumeclaims test-data`), but against the `team-3`
+namespace, Cedar would evaluate the policy to a static `false`, as
+`principal.groups.contains(resource.namespace)`, or during the evaluation with
+the concrete data `["engineers", "team-1", "team-2"].contains("team-3")` is
+`false`, and thus evaluation short-circuits. Thus is there no significant
+Denial-of-Service risk of unauthorized requests being able to make the API
+server do a lot of decoding work of large payloads. If there is no path towards
+becoming authorized later, the request is rejected early in the API server,
+before any decoding, just like before this feature introduction.
+
+### Restricting a subresource write
+
+Recall the `apps::deployments_scale` subresource type from the schema in the
+beginning. The request object for this subresource is of kind
+`autoscaling/v1 Scale`. The earlier example autoscaling authorization policy let
+the ServiceAccount `my-autoscaler-ns:my-autoscaler` `update` and `patch` scale
+any resource. However, if one wants to only conditionally authorize the
+operation using data from the request object (e.g. in this case, `Scale`), one
+needs to first tell Cedar what the resource type `is`, like follows:
+
+```cedar
+permit(
+    principal is k8s::ServiceAccount,
+    action in [k8s::Action::"update", k8s::Action::"patch"],
+    resource is apps::deployments_scale
+) when {
+  principal.serviceAccountName == "my-autoscaler" &&
+  principal.serviceAccountNamespace == "my-autoscaler-ns" &&
+  // Only allow autoscaling up to 50 replicas; don't let the autoscaler go crazy
+  resource has request.v1.spec.replicas &&
+  resource.request.v1.spec.replicas <= 50
+};
+```
+
+The CEL expression communicated to the API server for the enforcement would be:
+
+```cel
+has(object.spec) && has(object.spec.replicas) && object.spec.replicas <= 50
+```
+
+### Restricting a connect request
+
+Before
+[KEP-2862: Fine-grained Kubelet API Authorization](https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/2862-fine-grained-kubelet-authz/README.md),
+monitoring agents that wanted to scrape the kubelet's `/pods` endpoint by going
+through the API server proxy needed permission to `create "" nodes/proxy`. That
+worked without problems, but made it possible for such a monitoring agent to
+also execute into pods on the node, by crafting a request against the
+`/exec/...` endpoint of the kubelet, instead of the intended and read-only
+`/pods/...` endpoint.
+
+The linked KEP now introduces a special-cased `nodes/pods` subresource to allow
+for right-sizing the permissions of the monitoring agent, that indeed only
+requires read-only access. However, this could be done with this project in the
+following way:
+
+```cedar
+permit(
+    principal is k8s::ServiceAccount,
+    action == k8s::Action::"connect",
+    resource is core::nodes_proxy
+) when {
+  principal.serviceAccountName == "monitoring-agent" &&
+  principal.serviceAccountNamespace == "monitoring-agent-ns" &&
+  resource has request.v1 &&
+  resource.request.v1.path like "/pods/*" // and/or any other paths needed
+};
+```
+
+The CEL request to be enforced in admission would be:
+
+```cel
+request.options.path.startsWith("/pods/")
+```
+
+### Restricting a name on a create
+
+One consequence of the request body not being decoded at the time of
+authorization, is that the name of the object in a `create` request is not known
+at that point. In Kubernetes RBAC, this leads to that one must authorize the
+requesting principal to create an object of the resource type with any name
+([kubernetes#54080](https://github.com/kubernetes/kubernetes/issues/54080)).
+
+Say that your component stores some data in a `Secret` with name
+`foo-controller` in the `kube-system` namespace. Only access to that specific
+Secret is required, and as per the least privilege principle, the policy author
+writes the following `Role` and binds it to `foo-controller`.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: read-secret-foo-controller
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "create", "update", "patch", "delete"]
+  resourceName: ["foo-controller"]
+```
+
+Yet, due to the above anomaly, this does not work (contrary to what you'd
+expect); the policy author needs to modify the RBAC rule as follows:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: read-secret-foo-controller
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create"]
+  # can create any resourceName
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "update", "patch", "delete"]
+  resourceName: ["foo-controller"]
+```
+
+Expressing the same policy using this project works as expected:
+
+```cedar
+permit(
+  principal is k8s::ServiceAccount,
+  action in [
+    k8s::Action::"get",
+    k8s::Action::"create",
+    k8s::Action::"update",
+    k8s::Action::"patch",
+    k8s::Action::"delete"],
+  resource is core::secrets
+) when {
+  principal.serviceAccountName == "foo-controller" &&
+  principal.serviceAccountNamespace == "kube-system" &&
+  resource.namespace == "kube-system" &&
+  resource.name == "foo-controller"
+};
+```
+
+How is this possible? The trick is, again, to use partial evaluation.
+`resource.name` is known for verbs `get`, `update`, `patch`, and `delete`, but
+for `create` it is indeed unknown, yielding the Cedar residual:
+
+```cedar
+resource.name == "foo-controller"
+```
+
+which is translated into CEL as:
+
+```cel
+request.name == "foo-controller"
+```
+
+### Utilizing namespace metadata for write requests
+
+The Kubernetes `ValidatingAdmissionPolicy` API exposes information about the
+namespace object for namespaced requests. Thus, can also the Cedar policies
+(which turn into VAP-like expressions later in the request chain) be used for
+computing an authorization decision.
+
+The
+[DRA AdminAccess](https://github.com/kubernetes/enhancements/tree/master/keps/sig-auth/5018-dra-adminaccess)
+KEP uses a mechanism like that; it only allows creating especially powerful
+`ResourceClaim`s in namespaces with the
+`resource.kubernetes.io/admin-access=true` label.
+
+Unfortunately for this specific case, the `adminAccess` property is nested
+within a `requests` slice, and Cedar
+[does not support loops](https://github.com/upbound/kubernetes-cedar-authorizer/issues/45)
+(at the moment at least). However, pseudo-code for expressing that policy in
+Cedar would be:
+
+```cedar
+forbid(
+  principal,
+  action in [k8s::Action::"create", k8s::Action::"update", k8s::Action::"patch"],
+  resource is io::k8s::resource::resourceclaims // and templates
+) when {
+  // Disallow enabling adminAccess, unless the namespace has the right label
+  // The real field is .spec.devices.requests[*].adminAccess, but if we imagine it
+  // would just have been .spec.devices.allowAdminAccess; it'd be expressed as:
+  resource has request.v1 &&
+  resource.request.v1.spec.devices.allowAdminAccess
+} unless {
+  resource has namespaceMetadata.labels &&
+  resource.namespaceMetadata.labels.hasTag("resource.kubernetes.io/admin-access") &&
+  resource.namespaceMetadata.labels.getTag("resource.kubernetes.io/admin-access") == "true"
+};
+```
+
+Indeed, there are other use-cases for using namespace information than this
+example. The CEL expression (for the _forbid policy_, which denies the requests
+if the condition evaluates to `true`) generated would be something like:
+
+```cel
+object.spec.devices.allowAdminAccess &&
+!(namespaceObject != null && 
+  has(namespaceObject.labels) && 
+  has(namespaceObject.labels["resource.kubernetes.io/admin-access"]) && 
+  namespaceObject.labels["resource.kubernetes.io/admin-access"] == "true")
+```
+
+Sidenote: Cedar supports both `permit` and `forbid` policies, but this guide has
+not covered the `forbid` policies in any greater extent yet, as this project
+still needs to decide on whether to choose to support them, and if so, enable a
+consistent
+[privilege escalation framework](https://github.com/upbound/kubernetes-cedar-authorizer/issues/3)
+for the forbid policies.
+
+TODO: Conditional authorization vs compound authorization
+
+## Going beyond Kubernetes RBAC: Constraining Impersonation
+
+- Only impersonating a group when a given username is impersonated
+- Only being able to perform some requests during impersonation
 
 ## Going beyond Kubernetes RBAC: Through label and field selectors for reads
 
 - Filtering out a namespace or name in a watch (e.g. "not kube-system")
 - Conditional authorization for reads using selectors
 
-## Going beyond Kubernetes RBAC: Constraining Impersonation
-
-- Impersonation example
-
 ## TODO
 
 - Multi-version conditional authorization for writes
 - Non-resource requests
-- Restricting to only namespaced requests
 - Aggregated clusterroles?
 
 Limitations:
