@@ -193,66 +193,7 @@ Finally, we are ready to build the webhook image and start kind:
 make kind
 ```
 
-## Conditional Authorization
-
-As part of this experiment, the possibility of returning conditions from the
-Kubernetes authorization process, has been explored, and is looking promising.
-
-The following diagram shows how the conditional authorization feature could be
-implemented in Kubernetes:
-
-![Conditional Authorization in the Kubernetes handler chain](./docs/images/k8s-handler-chain.png)
-
-First, Kubernetes authenticates the principal as normal. Then, Kubernetes
-invokes the authorizer chain as normal. If the current authorizer
-unconditionally allows or denies the request, the process short-circuits, and
-either continues or stops. However, an authorizer can now also return a
-"conditional" response to Kubernetes, indicating that the request is allowed, as
-long as the returned conditions are met. The conditions should only refer to
-data that is unavailable at this stage, in other words, the request body (if
-any), the stored object (if any), and the namespace metadata (if any). The
-conditions are written in CEL, support the `request`, `object`, `oldObject`, and
-`namespaceObject` variables, exactly as for ValidatingAdmissionPolicies.
-
-When Kubernetes encounters a conditional response, it will first type-check the
-conditions, to make sure the conditions are valid according to the current
-OpenAPI schema of the targeted resource. If the conditions are valid, Kubernetes
-will attach the conditions to the request's `context.Context`, and continue
-processing the request as normally when allowed. However, there is a built-in
-admission controller that will verify that any condition attached to the context
-are met, and if not, deny the request.
-
-This proof of concept is implemented in Lucas' [conditional_authz_2 Kubernetes branch].
-
-Conditional Authorization is available IFF:
-
-- The SubjectAccessReview (SAR) sender indicates it supports the feature using the
-  `kubernetes.io/ConditionalAuthorizationFeature=true` annotation. Conditions
-  MUST NOT be returned if this annotation is not set, but instead any
-  conditional response that was yielded must be folded into a `NoOpinion`
-  response.
-  - This allows for backwards-compability with an old SAR sender, but new SAR
-    authorizer implementation.
-- The SubjectAccessReview/authorizer implementation supports conditions, and
-  when needed, responds with the conditions array JSON-encoded in the
-  `kubernetes.io/SubjectAccessReviewConditions` annotation, along with
-  `.status.allowed=false` and `.status.denied=false`.
-  - In case the SAR sender is new, but SAR authorizer implementation old, no
-    conditions will ever be returned, but all existing properties about the
-    other authorizer are backwards-compatible.
-  - Note: When a conditional response is encountered, the authorization process
-    is short-circuited, and subsequent authorizers are not consulted. This means
-    that even though a "later" authorizer would unconditionally allow the
-    request, the request is "only" conditionally authorized.
-- The request's GroupVersionResource (GVR) filter selects exactly one GVR, which
-  is served by the current API server, and the verb is one of `create`, `update`,
-  `patch`, `delete`.
-  - The GVR (which might include a subresource) is fully-qualified, means that
-    the API server can safely type-check the conditions against the current
-    OpenAPI schema of the targeted resource.
-- The SubjectAccessReview sender handles enforcement of the conditions whenever
-  all the information the conditions target is available, e.g. using a built-in
-  admission controller.
+Then, follow the [getting started guide].
 
 ## Frequently Asked Questions
 
@@ -300,3 +241,4 @@ This project:
 [Homebrew]: https://brew.sh/
 [kind]: https://kind.sigs.k8s.io/
 [kubectl]: https://kubernetes.io/docs/tasks/tools/#kubectl
+[getting started guide]: ./docs/GETTING_STARTED.md
